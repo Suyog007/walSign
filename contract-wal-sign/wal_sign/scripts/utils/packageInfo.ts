@@ -1,0 +1,2 @@
+export const packageId = '0xe39b0f8217af869a02097687dfd9f3f55ca677d50163b6c65e7c143c2407008b';
+export const DocumentRegistry = '0x42d1e1023f443487bc7b0f85cc2ae9bb93b3bcb7f6da65c875e744823904083e';
