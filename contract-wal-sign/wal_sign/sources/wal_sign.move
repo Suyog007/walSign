@@ -627,6 +627,17 @@ public(package) fun is_prefix(prefix: vector<u8>, data: &vector<u8>): bool {
     true
 }
 
+/// Read access to the document's UID for modules in this package
+public(package) fun uid(document: &Document): &UID {
+    &document.id
+}
+
+/// Mutable access to the document's UID so sibling modules can attach
+/// dynamic fields (e.g. the discussion thread) to a document
+public(package) fun uid_mut(document: &mut Document): &mut UID {
+    &mut document.id
+}
+
 // ======== Testing ========
 
 #[test_only]
