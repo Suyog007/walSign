@@ -3,6 +3,7 @@ import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { fromBase64, fromHex, toHex } from '@mysten/bcs';
 import { getSealClient, PACKAGE_ID, SEAL_THRESHOLD } from '../config/seal.config';
+import { getDynamicFieldValue } from './dynamicFields';
 
 /** Maximum length of a message as typed by the user */
 export const MAX_MESSAGE_LENGTH = 2000;
@@ -34,19 +35,7 @@ export type DecryptedMessages = Record<number, string | null>;
  * The thread ID lives in a `discussion::ThreadKey` dynamic field on the document.
  */
 export async function findThreadId(suiClient: SuiClient, documentId: string): Promise<string | null> {
-  let cursor: string | null | undefined = null;
-  do {
-    const page = await suiClient.getDynamicFields({ parentId: documentId, cursor, limit: PAGE_SIZE });
-    const entry = page.data.find((field) => field.name.type.endsWith('::discussion::ThreadKey'));
-    if (entry) {
-      const field = await suiClient.getDynamicFieldObject({ parentId: documentId, name: entry.name });
-      const content = field.data?.content;
-      if (content?.dataType !== 'moveObject') return null;
-      return (content.fields as any).value ?? null;
-    }
-    cursor = page.hasNextPage ? page.nextCursor : null;
-  } while (cursor);
-  return null;
+  return getDynamicFieldValue(suiClient, documentId, '::discussion::ThreadKey');
 }
 
 /** Read a thread object */
