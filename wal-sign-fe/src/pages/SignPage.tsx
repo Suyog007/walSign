@@ -165,7 +165,7 @@ export function SignPage() {
         progress: 40,
       });
       
-      const signedBlobId = await uploadToWalrus(encryptedData, 200);
+      const signedBlobId = await uploadToWalrus(encryptedData);
       
       if (!signedBlobId) {
         throw new Error('Failed to upload signed PDF to Walrus');

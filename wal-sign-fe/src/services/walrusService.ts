@@ -18,15 +18,19 @@ export interface WalrusUploadResponse {
  */
 export async function uploadToWalrus(
   encryptedData: Uint8Array,
-  epochs: number = 5 // Default to 5 epochs (approximately 30 days on testnet)
+  epochs: number = 5 // Storage duration in Walrus epochs (1 epoch = 1 day on testnet)
 ): Promise<string> {
+  if (!Number.isInteger(epochs) || epochs < 1) {
+    throw new Error(`Invalid Walrus storage duration: ${epochs} epochs`);
+  }
+
   try {
     // Convert Uint8Array to Blob properly by creating a new Uint8Array if needed
     const dataArray = new Uint8Array(encryptedData);
     const blob = new Blob([dataArray.buffer], { type: 'application/octet-stream' });
     
     // Walrus requires the epochs parameter for storage duration
-    const storeUrl = `${WALRUS_CONFIG.publisherUrl}/v1/blobs?epochs=3`;
+    const storeUrl = `${WALRUS_CONFIG.publisherUrl}/v1/blobs?epochs=${epochs}`;
     
     const response = await fetch(storeUrl, {
       method: 'PUT',
