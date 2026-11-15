@@ -21,6 +21,14 @@ npm run dev           # http://localhost:5173
 | `VITE_SEAL_KEY_SERVERS` | Comma separated Seal key server object IDs |
 | `VITE_SUI_EXPLORER_URL` | Optional explorer base URL for transaction links |
 
+## Features
+
+- **Upload & sign**: documents are Seal-encrypted under their on-chain ID and stored on Walrus; signers place their signature on the PDF and record it on chain.
+- **Signing rules**: optional sequential order and deadline, decline with a reason, reassign pending signers.
+- **Discussion**: an end-to-end encrypted thread per document, readable only by its participants.
+- **Audit trail & certificate**: every on-chain event of a document, a downloadable completion certificate, and `/certificate` to verify one against chain data.
+- **Templates** (`/templates`): save a PDF with signer roles and signature fields, then send it to one set of recipients or in bulk (one document per line of a recipient list; two wallet prompts for the whole batch).
+
 ## Scripts
 
 | Command | What it does |

@@ -72,6 +72,15 @@ Optional signing rules stored as a dynamic field on the document (so `Document`'
 - **Deadline**: signatures after this timestamp are rejected; the creator can extend or clear it
 - **Declines**: a signer can decline with a reason, which pauses signing until the creator reassigns or revokes them
 
+#### `template::Template`
+A reusable document template (module `wal_sign::template`), owned by its creator and not transferable:
+- **Content**: name, description and the Walrus blob of the Seal-encrypted template PDF
+- **Roles**: signer roles in their default signing order (max 20)
+- **Signature fields**: rectangles per role (page, x, y, width, height in PDF points from the top-left; max 100)
+- **Access**: `seal_approve_template` releases keys namespaced under the template ID to whoever can pass the owned object, i.e. only the owner
+
+Documents created from a template are ordinary `Document`s; the frontend stamps the field boxes into each document's PDF.
+
 #### `discussion::Thread`
 A private discussion attached to a document (module `wal_sign::discussion`):
 - **One per document**: opened by any participant; its ID is stored on the document under a `ThreadKey` dynamic field
@@ -268,6 +277,13 @@ let docs = get_assigned_documents(&registry, user_address);
 - `has_thread()` / `thread_id()` - Find a document's thread
 - `message_count()` / `message()` - Read messages
 
+### Templates (`wal_sign::template`)
+- `new_field()` - Build a `SignatureField` inside a programmable transaction
+- `create_template()` - Create a template owned by the sender
+- `set_blob_id()` - Record the encrypted PDF's Walrus blob
+- `delete_template()` - Delete a template
+- `seal_approve_template()` - Seal policy for template PDFs (owner only)
+
 ## 📡 Events
 
 The contract emits events for important actions:
@@ -350,11 +366,13 @@ sui move test
 wal_sign/
 ├── sources/
 │   ├── wal_sign.move          # Documents, signing and the document Seal policy
-│   └── discussion.move        # Encrypted per-document discussion threads
+│   ├── discussion.move        # Encrypted per-document discussion threads
+│   └── template.move          # Reusable document templates
 ├── tests/
 │   ├── wal_sign_tests.move    # Document and signing tests
 │   ├── workflow_tests.move    # Order, deadline, decline and reassign rules
-│   └── discussion_tests.move  # Discussion access-control tests
+│   ├── discussion_tests.move  # Discussion access-control tests
+│   └── template_tests.move    # Template validation and access tests
 ├── scripts/
 │   └── utils/
 │       ├── setup.ts           # Deployment script
@@ -386,6 +404,13 @@ wal_sign/
 - `E_THREAD_EXISTS (3)`: The document already has a thread
 - `E_EMPTY_MESSAGE (4)` / `E_MESSAGE_TOO_LARGE (5)`: Ciphertext is empty or over 8 KiB
 - `E_INVALID_KEY_ID (6)`: Seal key id is not namespaced under the thread
+
+`wal_sign::template`:
+- `E_INVALID_NAME (1)`: Name is empty or longer than 100 bytes
+- `E_INVALID_ROLES (2)`: No roles, more than 20, or an empty role name
+- `E_INVALID_FIELD (3)`: A field refers to a missing role or has no area
+- `E_TOO_MANY_FIELDS (4)`: More than 100 signature fields
+- `E_INVALID_KEY_ID (5)`: Seal key id is not namespaced under the template
 
 
 **Built with ❤️ on Sui Blockchain**
