@@ -50,6 +50,9 @@ export const SEAL_KEY_SERVERS = getEnvVar('VITE_SEAL_KEY_SERVERS')
   .map((id) => id.trim())
   .filter(Boolean);
 
+// Number of key servers that must agree before a key is released
+export const SEAL_THRESHOLD = Math.min(2, SEAL_KEY_SERVERS.length);
+
 let sealClient: SealClient | null = null;
 
 /**
