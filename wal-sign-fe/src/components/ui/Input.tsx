@@ -1,4 +1,4 @@
-import React from 'react';
+import { useId } from 'react';
 import { cn } from './cn';
 
 export function Input({
@@ -22,10 +22,12 @@ export function Input({
   type?: string;
   disabled?: boolean;
 }) {
+  const id = useId();
   return (
     <div className={cn('space-y-1', className)}>
-      {label && <label className="text-sm font-medium">{label}</label>}
+      {label && <label htmlFor={id} className="text-sm font-medium">{label}</label>}
       <input
+        id={id}
         type={type}
         value={value}
         onChange={(e) => onChange?.(e.target.value)}
