@@ -313,3 +313,237 @@ fun test_is_past_deadline() {
     };
     scenario.end();
 }
+
+// ======== Decline ========
+
+fun decline(scenario: &mut Scenario, signer: address, reason: vector<u8>) {
+    scenario.next_tx(signer);
+    let mut document = scenario.take_shared<Document>();
+    let cap = scenario.take_from_sender<SignerCap>();
+    let clock = new_clock(scenario, START + 10);
+    wal_sign::decline_document(&mut document, &cap, string::utf8(reason), &clock, scenario.ctx());
+    clock.destroy_for_testing();
+    test_scenario::return_to_sender(scenario, cap);
+    test_scenario::return_shared(document);
+}
+
+fun reassign(scenario: &mut Scenario, sender: address, from: address, to: address) {
+    scenario.next_tx(sender);
+    let mut registry = scenario.take_shared<DocumentRegistry>();
+    let mut document = scenario.take_shared<Document>();
+    let clock = new_clock(scenario, START + 20);
+    wal_sign::reassign_signer(&mut registry, &mut document, from, to, &clock, scenario.ctx());
+    clock.destroy_for_testing();
+    test_scenario::return_shared(document);
+    test_scenario::return_shared(registry);
+}
+
+#[test]
+fun test_signer_declines_with_reason() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    decline(&mut scenario, SIGNER1, b"Salary figure is wrong");
+
+    let effects = scenario.next_tx(CREATOR);
+    assert_eq!(effects.num_user_events(), 1);
+    {
+        let document = scenario.take_shared<Document>();
+        assert_eq!(wal_sign::get_status(&document), 3);
+        assert!(wal_sign::is_declined(&document));
+        assert!(wal_sign::has_declined(&document, SIGNER1));
+        assert!(!wal_sign::has_declined(&document, SIGNER2));
+
+        let declines = wal_sign::declines(&document);
+        assert_eq!(declines.length(), 1);
+        let (signer, reason, declined_at) = wal_sign::decline_details(&declines[0]);
+        assert_eq!(signer, SIGNER1);
+        assert_eq!(reason, string::utf8(b"Salary figure is wrong"));
+        assert_eq!(declined_at, START + 10);
+        test_scenario::return_shared(document);
+    };
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_DOCUMENT_DECLINED)]
+fun test_signing_paused_while_declined() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    decline(&mut scenario, SIGNER1, b"Wrong start date");
+    sign(&mut scenario, SIGNER2);
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_INVALID_REASON)]
+fun test_decline_requires_reason() {
+    let mut scenario = setup(vector[SIGNER1]);
+    decline(&mut scenario, SIGNER1, b"");
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_INVALID_REASON)]
+fun test_decline_reason_length_limited() {
+    let mut scenario = setup(vector[SIGNER1]);
+    let mut reason = vector[];
+    let mut i = 0;
+    while (i <= wal_sign::max_reason_bytes()) {
+        reason.push_back(65);
+        i = i + 1;
+    };
+    decline(&mut scenario, SIGNER1, reason);
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_ALREADY_SIGNED)]
+fun test_cannot_decline_after_signing() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    sign(&mut scenario, SIGNER1);
+    decline(&mut scenario, SIGNER1, b"Changed my mind");
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_ALREADY_DECLINED)]
+fun test_cannot_decline_twice() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    decline(&mut scenario, SIGNER1, b"No");
+    decline(&mut scenario, SIGNER1, b"Still no");
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_DOCUMENT_COMPLETED)]
+fun test_cannot_decline_completed_document() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    sign(&mut scenario, SIGNER1);
+    sign(&mut scenario, SIGNER2);
+    decline(&mut scenario, SIGNER2, b"Too late");
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_NOT_AUTHORIZED)]
+fun test_revoked_signer_cannot_decline() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    scenario.next_tx(CREATOR);
+    {
+        let mut document = scenario.take_shared<Document>();
+        wal_sign::revoke_signer(&mut document, SIGNER1, scenario.ctx());
+        test_scenario::return_shared(document);
+    };
+    decline(&mut scenario, SIGNER1, b"No");
+    scenario.end();
+}
+
+#[test]
+fun test_revoking_declined_signer_resumes_signing() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    decline(&mut scenario, SIGNER1, b"Not my document");
+
+    scenario.next_tx(CREATOR);
+    {
+        let mut document = scenario.take_shared<Document>();
+        wal_sign::revoke_signer(&mut document, SIGNER1, scenario.ctx());
+        assert!(!wal_sign::is_declined(&document));
+        assert_eq!(wal_sign::get_status(&document), 0);
+        test_scenario::return_shared(document);
+    };
+
+    sign(&mut scenario, SIGNER2);
+    assert_status(&mut scenario, 2);
+    scenario.end();
+}
+
+// ======== Reassign ========
+
+#[test]
+fun test_reassign_declined_signer_keeps_position() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    set_sequential(&mut scenario, CREATOR, true);
+    decline(&mut scenario, SIGNER1, b"Ask my colleague");
+    reassign(&mut scenario, CREATOR, SIGNER1, SIGNER3);
+
+    let effects = scenario.next_tx(CREATOR);
+    assert_eq!(effects.num_user_events(), 1);
+    {
+        let registry = scenario.take_shared<DocumentRegistry>();
+        let document = scenario.take_shared<Document>();
+        assert_eq!(wal_sign::get_authorized_signers(&document), vector[SIGNER3, SIGNER2]);
+        assert!(!wal_sign::is_declined(&document));
+        assert_eq!(wal_sign::get_status(&document), 0);
+        assert_eq!(wal_sign::next_signer(&document), option::some(SIGNER3));
+        assert_eq!(wal_sign::get_assigned_documents(&registry, SIGNER1).length(), 0);
+        assert_eq!(wal_sign::get_assigned_documents(&registry, SIGNER3), vector[object::id(&document)]);
+        test_scenario::return_shared(document);
+        test_scenario::return_shared(registry);
+    };
+
+    // The new signer got a cap and signs first, as SIGNER1 would have
+    sign(&mut scenario, SIGNER3);
+    sign(&mut scenario, SIGNER2);
+    assert_status(&mut scenario, 2);
+    scenario.end();
+}
+
+#[test]
+fun test_reassign_pending_signer_without_decline() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    sign(&mut scenario, SIGNER2);
+    reassign(&mut scenario, CREATOR, SIGNER1, SIGNER3);
+    assert_status(&mut scenario, 1);
+    sign(&mut scenario, SIGNER3);
+    assert_status(&mut scenario, 2);
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_NOT_AUTHORIZED)]
+fun test_reassigned_signer_cannot_sign() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    reassign(&mut scenario, CREATOR, SIGNER1, SIGNER3);
+    sign(&mut scenario, SIGNER1);
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_NOT_AUTHORIZED)]
+fun test_only_creator_reassigns() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    reassign(&mut scenario, SIGNER2, SIGNER1, SIGNER3);
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_ALREADY_SIGNED)]
+fun test_cannot_reassign_signer_who_signed() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    sign(&mut scenario, SIGNER1);
+    reassign(&mut scenario, CREATOR, SIGNER1, SIGNER3);
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_NOT_A_SIGNER)]
+fun test_cannot_reassign_non_signer() {
+    let mut scenario = setup(vector[SIGNER1]);
+    reassign(&mut scenario, CREATOR, OUTSIDER, SIGNER3);
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_ALREADY_A_SIGNER)]
+fun test_cannot_reassign_to_existing_signer() {
+    let mut scenario = setup(vector[SIGNER1, SIGNER2]);
+    reassign(&mut scenario, CREATOR, SIGNER1, SIGNER2);
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_DOCUMENT_COMPLETED)]
+fun test_cannot_reassign_on_completed_document() {
+    let mut scenario = setup(vector[SIGNER1]);
+    sign(&mut scenario, SIGNER1);
+    reassign(&mut scenario, CREATOR, SIGNER1, SIGNER3);
+    scenario.end();
+}
