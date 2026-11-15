@@ -1,5 +1,5 @@
 import { useParams, useSearchParams } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useCurrentAccount, useSignAndExecuteTransactionBlock } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { Card, CardBody, CardHeader } from '../components/ui/Card';
@@ -13,7 +13,13 @@ import { useDocumentDecryption } from '../hooks/useDocumentDecryption';
 import { encryptPDF } from '../services/documentService';
 import { PdfSignatureEditor } from '../components/PdfSignatureEditor';
 import { DocumentThreadPanel } from '../components/DocumentThreadPanel';
-import { Loader, CheckCircle, AlertCircle, FileText, Users, Calendar, Edit, Lock, Upload, Key, Shield } from 'lucide-react';
+import { SigningTimeline } from '../components/SigningTimeline';
+import { DeclineDialog } from '../components/DeclineDialog';
+import { ReassignDialog } from '../components/ReassignDialog';
+import { useDocumentWorkflow } from '../hooks/useDocumentWorkflow';
+import { useWorkflowActions } from '../hooks/useWorkflowActions';
+import { getSigningBlocker } from '../services/workflowService';
+import { Loader, CheckCircle, AlertCircle, FileText, Users, Calendar, Edit, Lock, Upload, Key, Shield, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface SignProgress {
@@ -48,6 +54,18 @@ export function SignPage() {
     message: '',
     progress: 0,
   });
+  const [isDeclineOpen, setIsDeclineOpen] = useState(false);
+  const [reassignFrom, setReassignFrom] = useState<string | null>(null);
+
+  const { workflow, reload: reloadWorkflow } = useDocumentWorkflow(document?.documentId);
+
+  const refreshDocument = useCallback(async () => {
+    const updated = await getDocumentDetails(suiClient, documentId);
+    if (updated) setDocument(updated);
+    await reloadWorkflow();
+  }, [documentId, reloadWorkflow]);
+
+  const workflowActions = useWorkflowActions(document, refreshDocument);
 
   // Fetch document details
   useEffect(() => {
@@ -400,10 +418,7 @@ export function SignPage() {
                 // Refresh document data after a short delay
                 setTimeout(async () => {
                   try {
-                    const updated = await getDocumentDetails(suiClient, document.documentId);
-                    if (updated) {
-                      setDocument(updated);
-                    }
+                    await refreshDocument();
                   } catch (refreshError) {
                     console.error('Error refreshing document:', refreshError);
                     // Don't throw - signing was successful even if refresh fails
@@ -462,6 +477,14 @@ export function SignPage() {
   }
 
   const isAuthorized = currentAccount && document.authorizedSigners.includes(currentAccount.address);
+  const isCreator = currentAccount?.address === document.creator;
+  const now = Date.now();
+  const signingBlocker = currentAccount ? getSigningBlocker(document, workflow, currentAccount.address, now) : null;
+  const canDecline =
+    !!isAuthorized &&
+    document.status !== 2 &&
+    !document.signatures.some((s) => s.signer === currentAccount?.address) &&
+    !workflow.declines.some((d) => d.signer === currentAccount?.address);
   const alreadySigned = currentAccount && document.signatures.some(s => s.signer === currentAccount.address);
   const totalSigners = document.authorizedSigners.length;
   const signedCount = document.signatures.length;
@@ -532,22 +555,15 @@ export function SignPage() {
             </div>
 
             <div>
-              <p className="text-sm font-medium text-gray-500 mb-2">Authorized Signers</p>
-              <ul className="space-y-2">
-                {document.authorizedSigners.map((addr) => {
-                  const hasSigned = document.signatures.some(s => s.signer === addr);
-                  return (
-                    <li key={addr} className="flex items-center gap-2 text-xs">
-                      {hasSigned ? (
-                        <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
-                      ) : (
-                        <div className="w-4 h-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
-                      )}
-                      <span className="font-mono truncate">{addr}</span>
-                    </li>
-                  );
-                })}
-              </ul>
+              <p className="text-sm font-medium text-gray-500 mb-2">Signing Status</p>
+              <SigningTimeline
+                document={document}
+                workflow={workflow}
+                now={now}
+                currentAddress={currentAccount?.address}
+                canManage={isCreator}
+                onReassign={setReassignFrom}
+              />
             </div>
           </CardBody>
         </Card>
@@ -669,6 +685,10 @@ export function SignPage() {
                   You are not authorized to sign this document.
                 </p>
               </div>
+            ) : signingBlocker && !alreadySigned ? (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <p className="text-sm text-yellow-800">{signingBlocker}</p>
+              </div>
             ) : alreadySigned ? (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                 <CheckCircle className="w-5 h-5 text-green-600 mb-2" />
@@ -712,6 +732,20 @@ export function SignPage() {
                   </div>
                 )}
               </div>
+            )}
+
+            {canDecline && !isEditing && !isProcessingSignature && (
+              <Button
+                onClick={() => {
+                  workflowActions.clearError();
+                  setIsDeclineOpen(true);
+                }}
+                variant="outline"
+                className="w-full text-red-700"
+              >
+                <XCircle className="w-4 h-4 mr-2" />
+                Decline to sign
+              </Button>
             )}
 
             {error && (
@@ -762,6 +796,24 @@ export function SignPage() {
       </div>
 
       <DocumentThreadPanel document={document} />
+
+      <DeclineDialog
+        open={isDeclineOpen}
+        onClose={() => setIsDeclineOpen(false)}
+        onSubmit={workflowActions.decline}
+        pending={workflowActions.pending === 'decline'}
+        error={workflowActions.error}
+      />
+      <ReassignDialog
+        from={reassignFrom}
+        onClose={() => {
+          setReassignFrom(null);
+          workflowActions.clearError();
+        }}
+        onSubmit={workflowActions.reassign}
+        pending={workflowActions.pending === 'reassign'}
+        error={workflowActions.error}
+      />
 
       {/* Progress Modal - Centered on Screen */}
       {isProcessingSignature && signProgress.stage !== 'idle' && (
