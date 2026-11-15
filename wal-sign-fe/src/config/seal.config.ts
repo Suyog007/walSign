@@ -29,10 +29,16 @@ export const REGISTRY_OBJECT_ID = getEnvVar(
   'VITE_REGISTRY_OBJECT_ID'
 );
 
+// Sui network the app talks to
+export const SUI_NETWORK = 'testnet' as const;
+
 // Sui Client Configuration
 export const suiClient = new SuiClient({
-  url: getFullnodeUrl("testnet"),
+  url: getFullnodeUrl(SUI_NETWORK),
 });
+
+// Optional block explorer base URL (e.g. https://suiscan.xyz/testnet) used for transaction links
+export const EXPLORER_URL = (import.meta.env.VITE_SUI_EXPLORER_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
 // Walrus Configuration (Testnet) - from .env
 export const WALRUS_CONFIG = {
