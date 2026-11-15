@@ -21,6 +21,9 @@ const DocumentCard: React.FC<DocumentCardProps> = ({
 }) => {
   // Calculate actual status based on signatures vs unique authorized signers
   const getActualStatus = () => {
+    if (document.status === 3) {
+      return 3; // Declined: signing paused by a signer
+    }
     const uniqueSigners = new Set(document.authorizedSigners).size;
     const signatureCount = document.signatures.length;
     
@@ -55,6 +58,12 @@ const DocumentCard: React.FC<DocumentCardProps> = ({
           label: 'Complete',
           color: 'bg-green-100 text-green-800 border-green-300',
           bgColor: 'bg-green-50',
+        };
+      case 3:
+        return {
+          label: 'Declined',
+          color: 'bg-red-100 text-red-800 border-red-400',
+          bgColor: 'bg-red-50',
         };
       default:
         return {

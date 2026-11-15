@@ -19,7 +19,7 @@ import {
 import { Button } from '../components/ui/Button';
 
 type TabType = 'created' | 'assigned';
-type FilterType = 'all' | 'pending' | 'partial' | 'complete';
+type FilterType = 'all' | 'pending' | 'partial' | 'complete' | 'declined';
 
 const ProfilePage: React.FC = () => {
   const navigate = useNavigate();
@@ -76,7 +76,8 @@ const ProfilePage: React.FC = () => {
         filterStatus === 'all' ||
         (filterStatus === 'pending' && doc.status === 0) ||
         (filterStatus === 'partial' && doc.status === 1) ||
-        (filterStatus === 'complete' && doc.status === 2);
+        (filterStatus === 'complete' && doc.status === 2) ||
+        (filterStatus === 'declined' && doc.status === 3);
 
       return matchesSearch && matchesStatus;
     });
@@ -263,6 +264,16 @@ const ProfilePage: React.FC = () => {
                   }`}
                 >
                   Complete
+                </button>
+                <button
+                  onClick={() => setFilterStatus('declined')}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    filterStatus === 'declined'
+                      ? 'bg-red-800 text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Declined
                 </button>
               </div>
             </div>

@@ -4,6 +4,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { encryptPDF } from '../services/documentService';
 import { uploadToWalrus } from '../services/walrusService';
 import { PACKAGE_ID, REGISTRY_OBJECT_ID } from '../config/seal.config';
+import { addWorkflowCalls, WorkflowSettings } from '../services/workflowService';
 
 export interface UploadProgress {
   stage: 'idle' | 'encrypting' | 'uploading' | 'recording' | 'issuing' | 'complete' | 'error';
@@ -23,7 +24,8 @@ export function useDocumentUpload() {
   const uploadDocument = async (
     pdfFile: File,
     title: string,
-    authorizedSigners: string[]
+    authorizedSigners: string[],
+    workflow: WorkflowSettings = {}
   ): Promise<{
     documentId: string;
     walrusBlobId: string;
@@ -147,6 +149,8 @@ export function useDocumentUpload() {
           updateBlobTx.pure.string(walrusBlobId), // Real Walrus blob ID
         ],
       });
+      // Signing order and deadline go in the same transaction: no extra wallet prompt
+      addWorkflowCalls(updateBlobTx, documentId, workflow);
 
       await new Promise<void>((resolve, reject) => {
         signAndExecuteTransaction(

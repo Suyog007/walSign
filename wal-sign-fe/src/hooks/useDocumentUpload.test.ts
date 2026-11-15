@@ -21,7 +21,7 @@ vi.mock('@mysten/sui/transactions', () => ({
   Transaction: vi.fn(() => ({
     moveCall: (call: { target: string }) => mocks.moveCalls.push(call),
     object: (id: string) => id,
-    pure: { string: (v: string) => v, vector: (_t: string, v: unknown) => v },
+    pure: { string: (v: string) => v, vector: (_t: string, v: unknown) => v, bool: (v: boolean) => v, u64: (v: number) => v },
   })),
 }));
 
@@ -68,6 +68,33 @@ describe('useDocumentUpload', () => {
     expect(mocks.encryptPDF).toHaveBeenCalledWith('0xpackage', '0xdoc', pdf);
     expect(result.current.progress.stage).toBe('complete');
     expect(result.current.isUploading).toBe(false);
+  });
+
+  it('applies the signing order and deadline in the blob update transaction', async () => {
+    mocks.signAndExecute
+      .mockImplementationOnce((_tx: unknown, { onSuccess }: Callbacks) =>
+        onSuccess({
+          digest: 'd',
+          objectChanges: [{ type: 'created', objectType: '0xpackage::wal_sign::Document', objectId: '0xdoc' }],
+        }),
+      )
+      .mockImplementationOnce((_tx: unknown, { onSuccess }: Callbacks) => onSuccess({ digest: 'update' }));
+    mocks.encryptPDF.mockResolvedValue({ encryptedData: new Uint8Array([1]) });
+    mocks.uploadToWalrus.mockResolvedValue('blob-1');
+
+    const { result } = renderHook(() => useDocumentUpload());
+    await act(async () => {
+      await result.current.uploadDocument(pdf, 'Contract', ['0xbob'], { sequential: true, deadlineMs: 99 });
+    });
+
+    // Still two wallet prompts: the settings ride along with update_blob_id
+    expect(mocks.signAndExecute).toHaveBeenCalledTimes(2);
+    expect(mocks.moveCalls.map((c) => c.target)).toEqual([
+      '0xpackage::wal_sign::create_document',
+      '0xpackage::wal_sign::update_blob_id',
+      '0xpackage::wal_sign::set_signing_order',
+      '0xpackage::wal_sign::set_deadline',
+    ]);
   });
 
   it('fails fast when no wallet is connected', async () => {

@@ -5,6 +5,7 @@ module wal_sign::wal_sign;
 use sui::event;
 use std::string::String;
 use sui::clock::{Clock};
+use sui::dynamic_field as df;
 use sui::table::{Self, Table};
 // ======== Error codes ========
 
@@ -14,6 +15,29 @@ const E_NOT_AUTHORIZED: u64 = 1;
 const E_ALREADY_SIGNED: u64 = 2;
 /// Error: Seal key id does not belong to this document
 const E_INVALID_KEY_ID: u64 = 3;
+/// Error: Signing order cannot change once someone has signed
+const E_SIGNING_STARTED: u64 = 4;
+/// Error: Deadline must be in the future
+const E_INVALID_DEADLINE: u64 = 5;
+/// Error: The document's signing deadline has passed
+const E_DEADLINE_PASSED: u64 = 6;
+/// Error: Sequential signing requires an earlier signer to sign first
+const E_NOT_YOUR_TURN: u64 = 7;
+/// Error: The document is already fully signed
+const E_DOCUMENT_COMPLETED: u64 = 8;
+/// Error: The signer has already declined this document
+const E_ALREADY_DECLINED: u64 = 9;
+/// Error: A signer declined; signing is paused until the creator reassigns or revokes them
+const E_DOCUMENT_DECLINED: u64 = 10;
+/// Error: Decline reason is empty or longer than MAX_REASON_BYTES
+const E_INVALID_REASON: u64 = 11;
+/// Error: Address is not an authorized signer of this document
+const E_NOT_A_SIGNER: u64 = 12;
+/// Error: Address is already an authorized signer of this document
+const E_ALREADY_A_SIGNER: u64 = 13;
+
+/// Maximum length of a decline reason in bytes
+const MAX_REASON_BYTES: u64 = 500;
 
 // ======== Structs ========
 
@@ -55,7 +79,7 @@ public struct Document has key, store {
     signatures: vector<Signature>,
     /// Timestamp when document was created (in milliseconds)
     created_at: u64,
-    /// Status: 0=pending, 1=partial, 2=complete
+    /// Status: 0=pending, 1=partial, 2=complete, 3=declined
     status: u8,
     /// Vector of blob IDs for signed document versions (newest last)
     signed_blob_id: vector<String>,
@@ -85,6 +109,29 @@ public struct SignerCap has key, store {
     document_id: ID,
 }
 
+/// Signing rules of a document, stored as a dynamic field on the `Document`
+///
+/// Kept outside the `Document` struct so the package stays upgrade
+/// compatible; documents without it sign in any order with no deadline.
+public struct Workflow has store {
+    /// When true, signers must sign in the order of `authorized_signers`
+    sequential: bool,
+    /// Signing is rejected after this timestamp (in milliseconds)
+    deadline_ms: Option<u64>,
+    /// Outstanding declines; signing is paused while any exist
+    declines: vector<Decline>,
+}
+
+/// A signer's refusal to sign, with their reason
+public struct Decline has store, copy, drop {
+    signer: address,
+    reason: String,
+    declined_at: u64,
+}
+
+/// Dynamic field key for a document's `Workflow`
+public struct WorkflowKey has copy, drop, store {}
+
 // ======== Events ========
 
 /// Event emitted when a new document is created
@@ -110,6 +157,40 @@ public struct DocumentSigned has copy, drop {
     signer: address,
     timestamp: u64,
     total_signatures: u64,
+}
+
+/// Event emitted when the creator switches between sequential and parallel signing
+public struct SigningOrderSet has copy, drop {
+    document_id: ID,
+    sequential: bool,
+}
+
+/// Event emitted when the creator sets, changes or clears the signing deadline
+public struct DeadlineSet has copy, drop {
+    document_id: ID,
+    deadline_ms: Option<u64>,
+}
+
+/// Event emitted when a signer declines to sign
+public struct DocumentDeclined has copy, drop {
+    document_id: ID,
+    signer: address,
+    reason: String,
+    timestamp: u64,
+}
+
+/// Event emitted when the creator hands a pending signer's slot to someone else
+public struct SignerReassigned has copy, drop {
+    document_id: ID,
+    from: address,
+    to: address,
+    timestamp: u64,
+}
+
+/// Event emitted when the last outstanding signature is collected
+public struct DocumentCompleted has copy, drop {
+    document_id: ID,
+    timestamp: u64,
 }
 
 // ======== Init Function ========
@@ -350,6 +431,13 @@ public fun sign_document(
     );
 
     let signer = ctx.sender();
+    // A revoked signer keeps their SignerCap object, so the list is the source of truth
+    assert!(document.authorized_signers.contains(&signer), E_NOT_AUTHORIZED);
+    assert!(!is_declined(document), E_DOCUMENT_DECLINED);
+    assert!(!is_past_deadline(document, clock), E_DEADLINE_PASSED);
+    if (is_sequential(document)) {
+        assert!(next_signer(document) == option::some(signer), E_NOT_YOUR_TURN);
+    };
 
     let already_signed = has_signed(document, signer);
     assert!(!already_signed, E_ALREADY_SIGNED);
@@ -362,15 +450,8 @@ public fun sign_document(
     
     document.signatures.push_back(signature);
 
-    // Update status
     let total_sigs = document.signatures.length();
-    let total_required = document.authorized_signers.length();
-    
-    if (total_sigs == total_required) {
-        document.status = 2; // completed
-    } else {
-        document.status = 1; // partially signed
-    };
+    refresh_status(document);
 
     // Emit event
     event::emit(DocumentSigned {
@@ -379,6 +460,162 @@ public fun sign_document(
         timestamp: clock.timestamp_ms(),
         total_signatures: total_sigs,
     });
+
+    if (document.status == 2) {
+        event::emit(DocumentCompleted {
+            document_id: object::id(document),
+            timestamp: clock.timestamp_ms(),
+        });
+    };
+}
+
+/// Declines to sign a document, giving a reason
+///
+/// Signing is paused for everyone until the creator reassigns or revokes
+/// the declining signer; the document status becomes 3 (declined).
+///
+/// # Panics
+/// * If the SignerCap does not match the document or the sender is not a current signer
+/// * If the sender has already signed or already declined
+/// * If the document is already fully signed
+/// * If the reason is empty or longer than `MAX_REASON_BYTES`
+///
+/// # Emits
+/// * `DocumentDeclined`
+public fun decline_document(
+    document: &mut Document,
+    cap: &SignerCap,
+    reason: String,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let signer = ctx.sender();
+    assert!(cap.document_id == object::id(document), E_NOT_AUTHORIZED);
+    assert!(document.authorized_signers.contains(&signer), E_NOT_AUTHORIZED);
+    assert!(document.status != 2, E_DOCUMENT_COMPLETED);
+    assert!(!has_signed(document, signer), E_ALREADY_SIGNED);
+    assert!(!has_declined(document, signer), E_ALREADY_DECLINED);
+    assert!(!reason.is_empty() && reason.length() <= MAX_REASON_BYTES, E_INVALID_REASON);
+
+    let declined_at = clock.timestamp_ms();
+    workflow_mut(document).declines.push_back(Decline { signer, reason, declined_at });
+    refresh_status(document);
+
+    event::emit(DocumentDeclined {
+        document_id: object::id(document),
+        signer,
+        reason,
+        timestamp: declined_at,
+    });
+}
+
+/// Replaces a signer who has not signed yet with another address
+///
+/// The new signer takes over the same position in the signing order and
+/// receives a `SignerCap`; the old signer loses access (their cap no longer
+/// works) and any decline they recorded is cleared.
+///
+/// # Panics
+/// * If the sender is not the document creator
+/// * If the document is already fully signed
+/// * If `from` is not a current signer, or has already signed
+/// * If `to` is already a signer
+///
+/// # Emits
+/// * `SignerReassigned`
+public fun reassign_signer(
+    registry: &mut DocumentRegistry,
+    document: &mut Document,
+    from: address,
+    to: address,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(ctx.sender() == document.creator, E_NOT_AUTHORIZED);
+    assert!(document.status != 2, E_DOCUMENT_COMPLETED);
+    let (found, index) = document.authorized_signers.index_of(&from);
+    assert!(found, E_NOT_A_SIGNER);
+    assert!(!has_signed(document, from), E_ALREADY_SIGNED);
+    assert!(!document.authorized_signers.contains(&to), E_ALREADY_A_SIGNER);
+
+    let document_id = object::id(document);
+    *document.authorized_signers.borrow_mut(index) = to;
+    remove_decline(document, from);
+    refresh_status(document);
+
+    if (registry.assigned_to_user.contains(from)) {
+        let previous_docs = registry.assigned_to_user.borrow_mut(from);
+        let (listed, position) = previous_docs.index_of(&document_id);
+        if (listed) {
+            previous_docs.remove(position);
+        };
+    };
+    if (!registry.assigned_to_user.contains(to)) {
+        registry.assigned_to_user.add(to, vector[]);
+    };
+    registry.assigned_to_user.borrow_mut(to).push_back(document_id);
+
+    transfer::public_transfer(SignerCap { id: object::new(ctx), document_id }, to);
+
+    event::emit(SignerReassigned { document_id, from, to, timestamp: clock.timestamp_ms() });
+}
+
+/// Chooses between sequential and parallel signing
+///
+/// In sequential mode signers must sign in the order of the authorized
+/// signers list (signers added later sign last). Can only be changed
+/// before the first signature.
+///
+/// # Panics
+/// * If the sender is not the document creator
+/// * If someone has already signed
+///
+/// # Emits
+/// * `SigningOrderSet`
+public fun set_signing_order(document: &mut Document, sequential: bool, ctx: &TxContext) {
+    assert!(ctx.sender() == document.creator, E_NOT_AUTHORIZED);
+    assert!(document.signatures.is_empty(), E_SIGNING_STARTED);
+
+    workflow_mut(document).sequential = sequential;
+
+    event::emit(SigningOrderSet { document_id: object::id(document), sequential });
+}
+
+/// Sets or moves the signing deadline
+///
+/// Signatures submitted after the deadline are rejected. The creator can
+/// extend an expired deadline to reopen signing.
+///
+/// # Panics
+/// * If the sender is not the document creator
+/// * If the document is already fully signed
+/// * If the deadline is not in the future
+///
+/// # Emits
+/// * `DeadlineSet`
+public fun set_deadline(document: &mut Document, deadline_ms: u64, clock: &Clock, ctx: &TxContext) {
+    assert!(ctx.sender() == document.creator, E_NOT_AUTHORIZED);
+    assert!(document.status != 2, E_DOCUMENT_COMPLETED);
+    assert!(deadline_ms > clock.timestamp_ms(), E_INVALID_DEADLINE);
+
+    workflow_mut(document).deadline_ms = option::some(deadline_ms);
+
+    event::emit(DeadlineSet { document_id: object::id(document), deadline_ms: option::some(deadline_ms) });
+}
+
+/// Removes the signing deadline
+///
+/// # Panics
+/// * If the sender is not the document creator
+///
+/// # Emits
+/// * `DeadlineSet` with no deadline
+public fun clear_deadline(document: &mut Document, ctx: &TxContext) {
+    assert!(ctx.sender() == document.creator, E_NOT_AUTHORIZED);
+
+    workflow_mut(document).deadline_ms = option::none();
+
+    event::emit(DeadlineSet { document_id: object::id(document), deadline_ms: option::none() });
 }
 
 /// Seal approval function for document decryption
@@ -426,6 +663,8 @@ public fun revoke_signer(
     if (found) {
         vector::remove(&mut document.authorized_signers, index);
     };
+    remove_decline(document, signer_to_revoke);
+    refresh_status(document);
 }
 
 // ======== View Functions ========
@@ -532,13 +771,85 @@ public fun is_participant(document: &Document, addr: address): bool {
     addr == document.creator || document.authorized_signers.contains(&addr)
 }
 
+/// Returns `true` if signers must sign in list order
+public fun is_sequential(document: &Document): bool {
+    df::exists_(&document.id, WorkflowKey {}) && workflow(document).sequential
+}
+
+/// Returns the signing deadline in milliseconds, if one is set
+public fun deadline(document: &Document): Option<u64> {
+    if (df::exists_(&document.id, WorkflowKey {})) {
+        workflow(document).deadline_ms
+    } else {
+        option::none()
+    }
+}
+
+/// Returns `true` if a deadline is set and has passed
+public fun is_past_deadline(document: &Document, clock: &Clock): bool {
+    let deadline = deadline(document);
+    deadline.is_some() && clock.timestamp_ms() > *deadline.borrow()
+}
+
+/// Returns `true` while a signer's decline is outstanding
+public fun is_declined(document: &Document): bool {
+    !declines(document).is_empty()
+}
+
+/// Returns `true` if `signer` has an outstanding decline
+public fun has_declined(document: &Document, signer: address): bool {
+    let declines = declines(document);
+    let mut i = 0;
+    while (i < declines.length()) {
+        if (declines[i].signer == signer) {
+            return true
+        };
+        i = i + 1;
+    };
+    false
+}
+
+/// Returns the outstanding declines of a document
+public fun declines(document: &Document): vector<Decline> {
+    if (df::exists_(&document.id, WorkflowKey {})) {
+        workflow(document).declines
+    } else {
+        vector[]
+    }
+}
+
+/// Returns who declined, why, and when (in milliseconds)
+public fun decline_details(decline: &Decline): (address, String, u64) {
+    (decline.signer, decline.reason, decline.declined_at)
+}
+
+/// Returns the maximum decline reason length in bytes
+public fun max_reason_bytes(): u64 {
+    MAX_REASON_BYTES
+}
+
+/// Returns the first authorized signer who has not signed yet
+///
+/// In sequential mode this is the only signer allowed to sign next.
+public fun next_signer(document: &Document): Option<address> {
+    let mut i = 0;
+    while (i < document.authorized_signers.length()) {
+        let signer = document.authorized_signers[i];
+        if (!has_signed(document, signer)) {
+            return option::some(signer)
+        };
+        i = i + 1;
+    };
+    option::none()
+}
+
 /// Returns the current status of a document
 ///
 /// # Parameters
 /// * `document` - Reference to the document
 ///
 /// # Returns
-/// * Status code: 0=pending, 1=partial, 2=complete
+/// * Status code: 0=pending, 1=partial, 2=complete, 3=declined
 public fun get_status(document: &Document): u8 {
     document.status
 }
@@ -610,6 +921,66 @@ public fun get_signatures(document: &Document): vector<Signature> {
 }
 
 // ======== Package Helpers ========
+
+fun workflow(document: &Document): &Workflow {
+    df::borrow(&document.id, WorkflowKey {})
+}
+
+/// Returns the document's workflow, creating the default one on first use
+fun workflow_mut(document: &mut Document): &mut Workflow {
+    if (!df::exists_(&document.id, WorkflowKey {})) {
+        df::add(
+            &mut document.id,
+            WorkflowKey {},
+            Workflow { sequential: false, deadline_ms: option::none(), declines: vector[] },
+        );
+    };
+    df::borrow_mut(&mut document.id, WorkflowKey {})
+}
+
+/// Removes the outstanding decline of `signer`, if any
+fun remove_decline(document: &mut Document, signer: address) {
+    if (!df::exists_(&document.id, WorkflowKey {})) {
+        return
+    };
+    let declines = &mut workflow_mut(document).declines;
+    let mut i = 0;
+    while (i < declines.length()) {
+        if (declines[i].signer == signer) {
+            declines.remove(i);
+            return
+        };
+        i = i + 1;
+    };
+}
+
+/// Recomputes `status` from the current signer list: declined while a
+/// decline is outstanding, complete once every authorized signer has
+/// signed, partial once anyone has signed
+fun refresh_status(document: &mut Document) {
+    if (is_declined(document)) {
+        document.status = 3;
+        return
+    };
+
+    let signers = &document.authorized_signers;
+    let mut all_signed = !signers.is_empty();
+    let mut i = 0;
+    while (i < signers.length()) {
+        if (!has_signed(document, signers[i])) {
+            all_signed = false;
+        };
+        i = i + 1;
+    };
+
+    document.status = if (all_signed) {
+        2 // completed
+    } else if (document.signatures.is_empty()) {
+        0 // pending
+    } else {
+        1 // partially signed
+    };
+}
 
 /// Returns `true` if `data` starts with `prefix`
 public(package) fun is_prefix(prefix: vector<u8>, data: &vector<u8>): bool {

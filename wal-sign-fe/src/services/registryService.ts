@@ -16,7 +16,7 @@ export interface DocumentSummary {
   authorizedSigners: string[];
   signatures: DocumentSignature[];
   createdAt: number;
-  status: 0 | 1 | 2; // 0 = Pending, 1 = Partial, 2 = Complete
+  status: 0 | 1 | 2 | 3; // 0 = Pending, 1 = Partial, 2 = Complete, 3 = Declined
 }
 
 /**

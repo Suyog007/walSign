@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { UserPlus, CheckCircle, Loader } from 'lucide-react';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
@@ -9,6 +9,11 @@ import { isValidSuiAddress } from '@mysten/sui/utils';
 import { PACKAGE_ID, REGISTRY_OBJECT_ID } from '../config/seal.config';
 import { useSignAndExecuteTransactionBlock } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
+import { SigningRulesFields } from './SigningRulesFields';
+import { useDocumentWorkflow } from '../hooks/useDocumentWorkflow';
+import { useWorkflowActions } from '../hooks/useWorkflowActions';
+import { parseDeadlineInput, WorkflowSettings } from '../services/workflowService';
+import { toDateTimeLocal } from '../utils/dateUtils';
 
 interface AddParticipantsModalProps {
   isOpen: boolean;
@@ -36,6 +41,46 @@ const AddParticipantsModal: React.FC<AddParticipantsModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  const { workflow, reload: reloadWorkflow } = useDocumentWorkflow(isOpen ? document.documentId : null);
+  const workflowActions = useWorkflowActions(document, () => {
+    reloadWorkflow();
+    onSuccess();
+  });
+  const [sequential, setSequential] = useState(false);
+  const [deadline, setDeadline] = useState('');
+  const [rulesError, setRulesError] = useState<string | null>(null);
+  const [rulesSaved, setRulesSaved] = useState(false);
+
+  useEffect(() => {
+    setSequential(workflow.sequential);
+    setDeadline(workflow.deadlineMs !== null ? toDateTimeLocal(workflow.deadlineMs) : '');
+  }, [workflow]);
+
+  const currentDeadline = workflow.deadlineMs !== null ? toDateTimeLocal(workflow.deadlineMs) : '';
+  const rulesChanged = sequential !== workflow.sequential || deadline !== currentDeadline;
+
+  const handleSaveRules = async () => {
+    setRulesError(null);
+    setRulesSaved(false);
+    const settings: WorkflowSettings = {};
+    if (sequential !== workflow.sequential) settings.sequential = sequential;
+    if (deadline !== currentDeadline) {
+      if (!deadline) {
+        settings.deadlineMs = null;
+      } else {
+        const parsed = parseDeadlineInput(deadline, Date.now());
+        if ('error' in parsed) {
+          setRulesError(parsed.error);
+          return;
+        }
+        settings.deadlineMs = parsed.deadlineMs;
+      }
+    }
+    if (await workflowActions.saveSettings(settings)) {
+      setRulesSaved(true);
+    }
+  };
 
   const validateAddress = (address: string): boolean => {
     if (!address) {
@@ -225,6 +270,43 @@ const AddParticipantsModal: React.FC<AddParticipantsModalProps> = ({
                 Cancel
               </Button>
             </div>
+          </div>
+        </div>
+
+        {/* Signing Rules */}
+        <div>
+          <h4 className="text-sm font-medium text-gray-700 mb-3">Signing Rules:</h4>
+          <SigningRulesFields
+            sequential={sequential}
+            onSequentialChange={(value) => {
+              setSequential(value);
+              setRulesSaved(false);
+            }}
+            sequentialLockedReason={
+              document.signatures.length > 0 ? 'The order is fixed once someone has signed.' : undefined
+            }
+            deadline={deadline}
+            onDeadlineChange={(value) => {
+              setDeadline(value);
+              setRulesError(null);
+              setRulesSaved(false);
+            }}
+            deadlineError={rulesError ?? workflowActions.error}
+          />
+          {sequential && (
+            <p className="mt-2 text-xs text-gray-500">New participants sign after the current signers.</p>
+          )}
+          <div className="mt-3 flex items-center justify-end gap-3">
+            {rulesSaved && <span className="text-xs text-green-700">Signing rules saved</span>}
+            <Button
+              onClick={handleSaveRules}
+              disabled={!rulesChanged || document.status === 2}
+              loading={workflowActions.pending === 'settings'}
+              variant="outline"
+              size="sm"
+            >
+              Save signing rules
+            </Button>
           </div>
         </div>
 
