@@ -20,7 +20,8 @@ import {
   Unlock,
   Loader,
   AlertCircle,
-  ExternalLink
+  ExternalLink,
+  XCircle
 } from 'lucide-react';
 
 export function VerifyPage() {
@@ -116,8 +117,16 @@ export function VerifyPage() {
   const getStatusInfo = (doc: DocumentSummary) => {
     const uniqueSigners = new Set(doc.authorizedSigners).size;
     const signatureCount = doc.signatures.length;
-    
-    if (signatureCount === 0) {
+
+    if (doc.status === 3) {
+      return {
+        label: 'Declined by a Signer',
+        color: 'text-red-700',
+        bgColor: 'bg-red-50',
+        borderColor: 'border-red-300',
+        icon: <XCircle className="w-5 h-5" />
+      };
+    } else if (signatureCount === 0) {
       return {
         label: 'Pending Signatures',
         color: 'text-red-600',
