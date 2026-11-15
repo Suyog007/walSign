@@ -7,6 +7,7 @@ import { VerifyPage } from './pages/VerifyPage';
 import ProfilePage from './pages/ProfilePage';
 import { ViewBlobPage } from './pages/ViewBlobPage';
 import { CertificateVerifyPage } from './pages/CertificateVerifyPage';
+import { TemplatesPage } from './pages/TemplatesPage';
 import { useAutoConnectWallet } from './hooks/useAutoConnectWallet';
 import { WalletAutoConnect } from './components/WalletAutoConnect';
 
@@ -36,6 +37,7 @@ export default function App() {
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/view-blob" element={<ViewBlobPage />} />
             <Route path="/certificate" element={<CertificateVerifyPage />} />
+            <Route path="/templates" element={<TemplatesPage />} />
           </Routes>
         </div>
         <WalletAutoConnect />
