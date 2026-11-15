@@ -53,7 +53,7 @@ The main document record containing:
 - **Storage**: Walrus blob ID for encrypted document storage
 - **Access Control**: List of authorized signers
 - **Signatures**: Collection of all signatures received
-- **Status**: Current signing status (0=pending, 1=partial, 2=complete)
+- **Status**: Current signing status (0=pending, 1=partial, 2=complete, 3=declined)
 - **Version History**: Vector of signed document blob IDs
 
 #### `SignerCap`
@@ -65,6 +65,12 @@ Capability objects that prove authorization to sign. Each authorized signer rece
 Individual signature records containing:
 - **Signer address**: Who signed the document
 - **Timestamp**: When the signature was recorded
+
+#### `Workflow`
+Optional signing rules stored as a dynamic field on the document (so `Document`'s layout and package upgrade compatibility are unchanged):
+- **Sequential order**: signers must sign in the order of the signer list; set by the creator before the first signature
+- **Deadline**: signatures after this timestamp are rejected; the creator can extend or clear it
+- **Declines**: a signer can decline with a reason, which pauses signing until the creator reassigns or revokes them
 
 #### `discussion::Thread`
 A private discussion attached to a document (module `wal_sign::discussion`):
@@ -227,9 +233,17 @@ let docs = get_assigned_documents(&registry, user_address);
 - `update_signed_blob_id()` - Add a new signed document version
 
 ### Signing Operations
-- `sign_document()` - Sign a document using a SignerCap
-- `issue_signer_capability()` - Add a new authorized signer
-- `revoke_signer()` - Remove a signer's authorization
+- `sign_document()` - Sign a document using a SignerCap (enforces order, deadline and declines)
+- `issue_signer_capability()` - Add a new authorized signer (appended to the signing order)
+- `revoke_signer()` - Remove a signer's authorization (also clears their decline)
+- `decline_document()` - Decline to sign with a reason (max 500 bytes)
+- `reassign_signer()` - Creator replaces a signer who has not signed; the new signer keeps the same position
+
+### Signing Rules
+- `set_signing_order()` - Switch between sequential and parallel signing (creator, before the first signature)
+- `set_deadline()` / `clear_deadline()` - Manage the signing deadline (creator)
+- `is_sequential()`, `deadline()`, `is_past_deadline()`, `next_signer()` - Read the rules
+- `is_declined()`, `has_declined()`, `declines()`, `decline_details()` - Read declines
 
 ### Access Control
 - `seal_approve()` - Seal policy for document versions; key ids must start with the document ID
@@ -281,6 +295,15 @@ Emitted when a document is signed:
 }
 ```
 
+### Workflow events
+```move
+SigningOrderSet   { document_id: ID, sequential: bool }
+DeadlineSet       { document_id: ID, deadline_ms: Option<u64> }   // none = cleared
+DocumentDeclined  { document_id: ID, signer: address, reason: String, timestamp: u64 }
+SignerReassigned  { document_id: ID, from: address, to: address, timestamp: u64 }
+DocumentCompleted { document_id: ID, timestamp: u64 }
+```
+
 ### `discussion::ThreadCreated` / `discussion::MessagePosted`
 Emitted when a participant opens a document's discussion or posts to it.
 Message bodies are never included in events; they stay encrypted on the thread.
@@ -293,7 +316,8 @@ Message bodies are never included in events; they stay encrypted on the thread.
 
 ### Authorization Checks
 - Document creators can update blob IDs and manage signers
-- Only authorized signers can sign documents
+- Only current authorized signers can sign or decline; a revoked or reassigned signer's leftover SignerCap is useless
+- Sequential order, deadlines and outstanding declines are enforced on chain in `sign_document`
 - SignerCap must match the document being signed
 - Duplicate signatures are prevented
 
@@ -329,6 +353,7 @@ wal_sign/
 │   └── discussion.move        # Encrypted per-document discussion threads
 ├── tests/
 │   ├── wal_sign_tests.move    # Document and signing tests
+│   ├── workflow_tests.move    # Order, deadline, decline and reassign rules
 │   └── discussion_tests.move  # Discussion access-control tests
 ├── scripts/
 │   └── utils/
@@ -344,6 +369,16 @@ wal_sign/
 - `E_NOT_AUTHORIZED (1)`: User is not authorized to perform the operation
 - `E_ALREADY_SIGNED (2)`: User has already signed this document
 - `E_INVALID_KEY_ID (3)`: Seal key id is not namespaced under the document
+- `E_SIGNING_STARTED (4)`: Signing order cannot change after the first signature
+- `E_INVALID_DEADLINE (5)`: Deadline must be in the future
+- `E_DEADLINE_PASSED (6)`: The signing deadline has passed
+- `E_NOT_YOUR_TURN (7)`: Sequential signing requires an earlier signer to sign first
+- `E_DOCUMENT_COMPLETED (8)`: The document is already fully signed
+- `E_ALREADY_DECLINED (9)`: The signer has already declined
+- `E_DOCUMENT_DECLINED (10)`: Signing is paused while a decline is outstanding
+- `E_INVALID_REASON (11)`: Decline reason is empty or too long
+- `E_NOT_A_SIGNER (12)`: Address is not a signer of the document
+- `E_ALREADY_A_SIGNER (13)`: Address is already a signer of the document
 
 `wal_sign::discussion`:
 - `E_NOT_PARTICIPANT (1)`: Sender is not the document's creator or an authorized signer
