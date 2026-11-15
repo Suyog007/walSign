@@ -350,6 +350,8 @@ public fun sign_document(
     );
 
     let signer = ctx.sender();
+    // A revoked signer keeps their SignerCap object, so the list is the source of truth
+    assert!(document.authorized_signers.contains(&signer), E_NOT_AUTHORIZED);
 
     let already_signed = has_signed(document, signer);
     assert!(!already_signed, E_ALREADY_SIGNED);
@@ -362,15 +364,8 @@ public fun sign_document(
     
     document.signatures.push_back(signature);
 
-    // Update status
     let total_sigs = document.signatures.length();
-    let total_required = document.authorized_signers.length();
-    
-    if (total_sigs == total_required) {
-        document.status = 2; // completed
-    } else {
-        document.status = 1; // partially signed
-    };
+    refresh_status(document);
 
     // Emit event
     event::emit(DocumentSigned {
@@ -426,6 +421,7 @@ public fun revoke_signer(
     if (found) {
         vector::remove(&mut document.authorized_signers, index);
     };
+    refresh_status(document);
 }
 
 // ======== View Functions ========
@@ -610,6 +606,28 @@ public fun get_signatures(document: &Document): vector<Signature> {
 }
 
 // ======== Package Helpers ========
+
+/// Recomputes `status` from the current signer list: complete once every
+/// authorized signer has signed, partial once anyone has signed
+fun refresh_status(document: &mut Document) {
+    let signers = &document.authorized_signers;
+    let mut all_signed = !signers.is_empty();
+    let mut i = 0;
+    while (i < signers.length()) {
+        if (!has_signed(document, signers[i])) {
+            all_signed = false;
+        };
+        i = i + 1;
+    };
+
+    document.status = if (all_signed) {
+        2 // completed
+    } else if (document.signatures.is_empty()) {
+        0 // pending
+    } else {
+        1 // partially signed
+    };
+}
 
 /// Returns `true` if `data` starts with `prefix`
 public(package) fun is_prefix(prefix: vector<u8>, data: &vector<u8>): bool {

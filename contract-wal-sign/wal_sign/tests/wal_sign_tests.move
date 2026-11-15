@@ -1031,6 +1031,69 @@ fun test_is_participant() {
     scenario.end();
 }
 
+#[test]
+#[expected_failure(abort_code = wal_sign::E_NOT_AUTHORIZED)]
+fun test_revoked_signer_cannot_sign_with_old_cap() {
+    let mut scenario = test_scenario::begin(CREATOR);
+    create_test_document(&mut scenario, vector[SIGNER1, SIGNER2]);
+
+    scenario.next_tx(CREATOR);
+    {
+        let mut document = scenario.take_shared<Document>();
+        wal_sign::revoke_signer(&mut document, SIGNER1, scenario.ctx());
+        test_scenario::return_shared(document);
+    };
+
+    scenario.next_tx(SIGNER1);
+    {
+        let mut document = scenario.take_shared<Document>();
+        let cap = scenario.take_from_sender<SignerCap>();
+        let clock = create_test_clock(scenario.ctx());
+
+        wal_sign::sign_document(&mut document, &cap, &clock, scenario.ctx());
+
+        clock.destroy_for_testing();
+        test_scenario::return_to_sender(&scenario, cap);
+        test_scenario::return_shared(document);
+    };
+
+    scenario.end();
+}
+
+#[test]
+fun test_document_completes_when_remaining_signers_sign_after_revoke() {
+    let mut scenario = test_scenario::begin(CREATOR);
+    create_test_document(&mut scenario, vector[SIGNER1, SIGNER2]);
+
+    scenario.next_tx(SIGNER1);
+    {
+        let mut document = scenario.take_shared<Document>();
+        let cap = scenario.take_from_sender<SignerCap>();
+        let clock = create_test_clock(scenario.ctx());
+        wal_sign::sign_document(&mut document, &cap, &clock, scenario.ctx());
+        clock.destroy_for_testing();
+        test_scenario::return_to_sender(&scenario, cap);
+        test_scenario::return_shared(document);
+    };
+
+    // SIGNER2 is removed before signing: the only remaining signer has signed
+    scenario.next_tx(CREATOR);
+    {
+        let mut document = scenario.take_shared<Document>();
+        wal_sign::revoke_signer(&mut document, SIGNER2, scenario.ctx());
+        test_scenario::return_shared(document);
+    };
+
+    scenario.next_tx(CREATOR);
+    {
+        let document = scenario.take_shared<Document>();
+        assert_eq!(wal_sign::get_status(&document), 2);
+        test_scenario::return_shared(document);
+    };
+
+    scenario.end();
+}
+
 // ======== View Function Tests ========
 
 #[test]
