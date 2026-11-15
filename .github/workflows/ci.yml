@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  move:
+    name: Move tests
+    runs-on: ubuntu-latest
+    env:
+      SUI_VERSION: testnet-v1.84.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Sui CLI
+        id: sui-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/sui
+          key: sui-cli-${{ env.SUI_VERSION }}-${{ runner.os }}
+
+      - name: Install Sui CLI
+        if: steps.sui-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/bin "$RUNNER_TEMP/sui"
+          curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${SUI_VERSION}/sui-${SUI_VERSION}-ubuntu-x86_64.tgz" \
+            | tar -xz -C "$RUNNER_TEMP/sui"
+          install -m 755 "$(find "$RUNNER_TEMP/sui" -type f -name sui | head -n 1)" ~/.local/bin/sui
+
+      - name: Configure Sui client
+        # `sui move` resolves the target environment from the client config; no keys are needed.
+        run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          mkdir -p ~/.sui/sui_config
+          echo '[]' > ~/.sui/sui_config/sui.keystore
+          cat > ~/.sui/sui_config/client.yaml <<YAML
+          keystore:
+            File: $HOME/.sui/sui_config/sui.keystore
+          envs:
+            - alias: testnet
+              rpc: "https://fullnode.testnet.sui.io:443"
+          active_env: testnet
+          active_address: ~
+          YAML
+
+      - name: Run Move unit tests
+        working-directory: contract-wal-sign/wal_sign
+        run: sui move test
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wal-sign-fe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: wal-sign-fe/package-lock.json
+
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build

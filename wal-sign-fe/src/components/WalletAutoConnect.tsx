@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useCurrentAccount, useCurrentWallet, useWallets } from '@mysten/dapp-kit';
+import { useCurrentAccount, useCurrentWallet } from '@mysten/dapp-kit';
 import { Button } from './ui/Button';
 import { Card, CardBody } from './ui/Card';
 import { RefreshCw, X } from 'lucide-react';
@@ -16,7 +16,6 @@ interface StoredWalletConnection {
 export function WalletAutoConnect() {
   const currentAccount = useCurrentAccount();
   const currentWallet = useCurrentWallet();
-  const wallets = useWallets();
   const [showReconnectPrompt, setShowReconnectPrompt] = useState(false);
   const [storedConnection, setStoredConnection] = useState<StoredWalletConnection | null>(null);
 

@@ -12,7 +12,6 @@ import {
   CheckCircle,
   RefreshCw,
   Search,
-  Filter,
   Loader,
   AlertCircle,
   FileX,

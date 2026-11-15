@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import { ConnectWallet } from '../components/ConnectWallet';
 
 export function HomePage() {
   return (

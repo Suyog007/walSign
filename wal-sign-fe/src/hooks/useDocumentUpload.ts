@@ -3,7 +3,7 @@ import { useCurrentAccount, useSignAndExecuteTransactionBlock } from '@mysten/da
 import { Transaction } from '@mysten/sui/transactions';
 import { encryptPDF } from '../services/documentService';
 import { uploadToWalrus } from '../services/walrusService';
-import { PACKAGE_ID, suiClient, REGISTRY_OBJECT_ID } from '../config/seal.config';
+import { PACKAGE_ID, REGISTRY_OBJECT_ID } from '../config/seal.config';
 
 export interface UploadProgress {
   stage: 'idle' | 'encrypting' | 'uploading' | 'recording' | 'issuing' | 'complete' | 'error';

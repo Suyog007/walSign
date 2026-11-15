@@ -1,8 +1,20 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
 	plugins: [react()],
+	test: {
+		environment: 'jsdom',
+		setupFiles: ['./src/test/setup.ts'],
+		// Placeholder values so config/seal.config.ts can load; tests never hit the network.
+		env: {
+			VITE_PACKAGE_ID: '0xpackage',
+			VITE_REGISTRY_OBJECT_ID: '0xregistry',
+			VITE_WALRUS_AGGREGATOR_URL: 'https://aggregator.test',
+			VITE_WALRUS_PUBLISHER_URL: 'https://publisher.test',
+		},
+	},
 	server: {
 		port: 5173,
 		proxy: {

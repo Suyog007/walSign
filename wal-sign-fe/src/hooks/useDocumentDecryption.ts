@@ -3,8 +3,6 @@ import { useCurrentAccount, useSignPersonalMessage } from '@mysten/dapp-kit';
 import { decryptPDF } from '../services/documentService';
 import { downloadFromWalrus } from '../services/walrusService';
 import { PACKAGE_ID, suiClient } from '../config/seal.config';
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { fromBase64 } from '@mysten/bcs';
 import { SessionKey } from '@mysten/seal';
 
 export function useDocumentDecryption() {
