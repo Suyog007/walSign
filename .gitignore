@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Move build artifacts
+build/
+
+# Environment files (copy from the *.example files)
+.env
+.env.local
+.env.*.local
+
+# Test coverage
+coverage/
+
+# Editor / OS files
+.DS_Store
+.idea/
+.vscode/
+*.log
