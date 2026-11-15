@@ -19,6 +19,7 @@ npm run dev           # http://localhost:5173
 | `VITE_WALRUS_AGGREGATOR_URL` | Walrus aggregator used to read blobs |
 | `VITE_WALRUS_PUBLISHER_URL` | Walrus publisher used to store blobs |
 | `VITE_SEAL_KEY_SERVERS` | Comma separated Seal key server object IDs |
+| `VITE_SUI_EXPLORER_URL` | Optional explorer base URL for transaction links |
 
 ## Scripts
 

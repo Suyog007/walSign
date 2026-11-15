@@ -19,7 +19,10 @@ import { ReassignDialog } from '../components/ReassignDialog';
 import { useDocumentWorkflow } from '../hooks/useDocumentWorkflow';
 import { useWorkflowActions } from '../hooks/useWorkflowActions';
 import { getSigningBlocker } from '../services/workflowService';
-import { Loader, CheckCircle, AlertCircle, FileText, Users, Calendar, Edit, Lock, Upload, Key, Shield, XCircle } from 'lucide-react';
+import { AuditTrail } from '../components/AuditTrail';
+import { useAuditTrail } from '../hooks/useAuditTrail';
+import { useCertificate } from '../hooks/useCertificate';
+import { Loader, CheckCircle, AlertCircle, FileText, Users, Calendar, Edit, Lock, Upload, Key, Shield, XCircle, Award, History } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface SignProgress {
@@ -58,12 +61,15 @@ export function SignPage() {
   const [reassignFrom, setReassignFrom] = useState<string | null>(null);
 
   const { workflow, reload: reloadWorkflow } = useDocumentWorkflow(document?.documentId);
+  const auditTrail = useAuditTrail(document?.documentId);
+  const reloadAuditTrail = auditTrail.reload;
+  const certificate = useCertificate();
 
   const refreshDocument = useCallback(async () => {
     const updated = await getDocumentDetails(suiClient, documentId);
     if (updated) setDocument(updated);
-    await reloadWorkflow();
-  }, [documentId, reloadWorkflow]);
+    await Promise.all([reloadWorkflow(), reloadAuditTrail()]);
+  }, [documentId, reloadWorkflow, reloadAuditTrail]);
 
   const workflowActions = useWorkflowActions(document, refreshDocument);
 
@@ -794,6 +800,37 @@ export function SignPage() {
           </CardBody>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-semibold flex items-center gap-2">
+            <History className="w-5 h-5" />
+            Audit Trail
+          </h3>
+          {document.status === 2 && (
+            <div className="flex flex-col items-end gap-1">
+              <Button
+                onClick={() => certificate.issue(document, pdfBlob)}
+                loading={certificate.isIssuing}
+                variant="outline"
+                size="sm"
+              >
+                <Award className="w-4 h-4 mr-2" />
+                Download certificate
+              </Button>
+              {certificate.error && <p className="text-xs text-red-700">{certificate.error}</p>}
+            </div>
+          )}
+        </CardHeader>
+        <CardBody>
+          <AuditTrail
+            entries={auditTrail.entries}
+            isLoading={auditTrail.isLoading}
+            error={auditTrail.error}
+            onRetry={auditTrail.reload}
+          />
+        </CardBody>
+      </Card>
 
       <DocumentThreadPanel document={document} />
 
