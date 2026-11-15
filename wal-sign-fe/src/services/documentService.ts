@@ -1,23 +1,8 @@
-import { SealClient, SessionKey, EncryptedObject } from "@mysten/seal";
+import { SessionKey, EncryptedObject } from "@mysten/seal";
 import { SuiClient } from "@mysten/sui/client";
 import { Transaction } from "@mysten/sui/transactions";
 import { fromHex } from "@mysten/bcs";
-import { suiClient } from "../config/seal.config";
-
-// Key server list for Seal client  
-const KEY_SERVER_LIST_TESTNET = [
-  "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75",
-  "0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
-];
-
-const sealClient = new SealClient({
-  suiClient: suiClient as any,
-  serverConfigs: KEY_SERVER_LIST_TESTNET.map((id: string) => ({
-    objectId: id,
-    weight: 1,
-  })),
-  verifyKeyServers: true,
-});
+import { getSealClient } from "../config/seal.config";
 
 /**
  * Encrypt PDF file using Seal
@@ -32,7 +17,7 @@ export async function encryptPDF(
   const arrayBuffer = await pdfFile.arrayBuffer();
   const pdfBytes = new Uint8Array(arrayBuffer);
 
-  const { encryptedObject } = await sealClient.encrypt({
+  const { encryptedObject } = await getSealClient().encrypt({
     threshold: 2,
     packageId,
     id: documentId,
@@ -87,7 +72,7 @@ export async function decryptPDF(
     });
 
     // Fetch key shares
-    await sealClient.fetchKeys({
+    await getSealClient().fetchKeys({
       ids: [encryptedObject.id],
       txBytes,
       sessionKey,
@@ -95,7 +80,7 @@ export async function decryptPDF(
     });
 
     // Decrypt PDF
-    const decrypted = await sealClient.decrypt({
+    const decrypted = await getSealClient().decrypt({
       data: encryptedBytes,
       sessionKey,
       txBytes,

@@ -18,6 +18,7 @@ npm run dev           # http://localhost:5173
 | `VITE_REGISTRY_OBJECT_ID` | Shared `DocumentRegistry` object created when the package was published |
 | `VITE_WALRUS_AGGREGATOR_URL` | Walrus aggregator used to read blobs |
 | `VITE_WALRUS_PUBLISHER_URL` | Walrus publisher used to store blobs |
+| `VITE_SEAL_KEY_SERVERS` | Comma separated Seal key server object IDs |
 
 ## Scripts
 
