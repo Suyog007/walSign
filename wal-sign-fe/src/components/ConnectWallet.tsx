@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ConnectButton, useCurrentAccount, useCurrentWallet, useWallets } from '@mysten/dapp-kit';
+import { ConnectButton, useCurrentAccount, useCurrentWallet } from '@mysten/dapp-kit';
 import { useDisconnectWallet } from '@mysten/dapp-kit';
 import { truncateAddress } from '../utils/addressUtils';
 import { Copy, Check, ChevronDown, LogOut } from 'lucide-react';
@@ -8,7 +8,6 @@ import toast from 'react-hot-toast';
 export function ConnectWallet() {
   const account = useCurrentAccount();
   const wallet = useCurrentWallet();
-  const wallets = useWallets();
   const [isExpanded, setIsExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);

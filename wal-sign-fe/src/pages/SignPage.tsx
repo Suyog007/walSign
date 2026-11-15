@@ -8,7 +8,7 @@ import { AddressDisplay } from '../components/ui/AddressDisplay';
 import { Button } from '../components/ui/Button';
 import { suiClient, PACKAGE_ID } from '../config/seal.config';
 import { getDocumentDetails, DocumentSummary, getLatestBlobId } from '../services/registryService';
-import { downloadFromWalrus, uploadToWalrus } from '../services/walrusService';
+import { uploadToWalrus } from '../services/walrusService';
 import { useDocumentDecryption } from '../hooks/useDocumentDecryption';
 import { encryptPDF } from '../services/documentService';
 import { PdfSignatureEditor } from '../components/PdfSignatureEditor';
@@ -37,7 +37,6 @@ export function SignPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
-  const [isSigning, setIsSigning] = useState(false);
   const [signSuccess, setSignSuccess] = useState(false);
   const [txHash, setTxHash] = useState<string>('');
   const [decryptionError, setDecryptionError] = useState<string | null>(null);
@@ -129,7 +128,7 @@ export function SignPage() {
     }
   };
 
-  const handleSaveSignedPdf = async (signedPdfBlob: Blob, signaturePositions: any[]) => {
+  const handleSaveSignedPdf = async (signedPdfBlob: Blob) => {
     if (!document || !currentAccount) return;
     
     setIsProcessingSignature(true);
@@ -312,19 +311,15 @@ export function SignPage() {
   const handleSign = async () => {
     if (!document || !currentAccount) return;
 
-    setIsSigning(true);
     setError(null);
 
     try {
       // Query all objects owned by the user to find the SignerCap (with pagination)
       let signerCapId: string | null = null;
       let cursor: string | null | undefined = null;
-      let totalObjects = 0;
-      let pageCount = 0;
 
       // Loop through all pages of owned objects
       do {
-        pageCount++;
         
         const ownedObjects = await suiClient.getOwnedObjects({
           owner: currentAccount.address,
@@ -336,7 +331,6 @@ export function SignPage() {
           },
         });
 
-        totalObjects += ownedObjects.data.length;
 
         // Search for SignerCap in this page
         for (const obj of ownedObjects.data) {
@@ -433,8 +427,6 @@ export function SignPage() {
     } catch (err: any) {
       console.error('Sign error:', err);
       setError(err.message || 'Failed to sign document');
-    } finally {
-      setIsSigning(false);
     }
   };
 

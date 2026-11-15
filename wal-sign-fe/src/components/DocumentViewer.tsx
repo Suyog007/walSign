@@ -18,15 +18,13 @@ export function DocumentViewer({
   const [numPages, setNumPages] = useState<number>(0);
   const [pageNumber, setPageNumber] = useState<number>(1);
   const [error, setError] = useState<string>('');
-  const [scale, setScale] = useState<number>(0.6); // Default zoom at 60%
+  const scale = 0.6; // Fixed zoom at 60%
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setPageNumber(1);
     setError('');
   }, [file]);
-
-  // Scale is fixed at 0.6 (60%) - no need for width calculations
 
   const onLoadSuccess = useCallback(
     ({ numPages: n }: { numPages: number }) => {
@@ -36,9 +34,8 @@ export function DocumentViewer({
     [],
   );
 
-  const onLoadError = useCallback((e: unknown) => {
+  const onLoadError = useCallback(() => {
     setError('Failed to load PDF');
-    // console.error(e);
   }, []);
 
   const canPrev = pageNumber > 1;

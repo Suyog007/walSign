@@ -5,7 +5,6 @@ import { Button } from './ui/Button';
 import { Card, CardBody, CardHeader } from './ui/Card';
 import { 
   Upload, 
-  Save, 
   X, 
   ZoomIn, 
   ZoomOut, 
@@ -13,7 +12,6 @@ import {
   ChevronRight,
   Move,
   Trash2,
-  Check,
   Loader,
   CheckCircle
 } from 'lucide-react';
@@ -217,7 +215,7 @@ export const PdfSignatureEditor: React.FC<PdfSignatureEditorProps> = ({
       }
 
       // Get page dimensions
-      const { width: pageWidth, height: pageHeight } = page.getSize();
+      const { height: pageHeight } = page.getSize();
 
       // Convert signature coordinates (top-left origin) to PDF coordinates (bottom-left origin)
       const pdfX = sig.x;

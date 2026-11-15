@@ -1,5 +1,5 @@
 import { SuiClient } from "@mysten/sui/client";
-import { PACKAGE_ID, REGISTRY_OBJECT_ID } from "../config/seal.config";
+import { REGISTRY_OBJECT_ID } from "../config/seal.config";
 
 export interface DocumentSignature {
   signer: string;
