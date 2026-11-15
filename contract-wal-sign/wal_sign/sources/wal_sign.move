@@ -5,6 +5,7 @@ module wal_sign::wal_sign;
 use sui::event;
 use std::string::String;
 use sui::clock::{Clock};
+use sui::dynamic_field as df;
 use sui::table::{Self, Table};
 // ======== Error codes ========
 
@@ -14,6 +15,16 @@ const E_NOT_AUTHORIZED: u64 = 1;
 const E_ALREADY_SIGNED: u64 = 2;
 /// Error: Seal key id does not belong to this document
 const E_INVALID_KEY_ID: u64 = 3;
+/// Error: Signing order cannot change once someone has signed
+const E_SIGNING_STARTED: u64 = 4;
+/// Error: Deadline must be in the future
+const E_INVALID_DEADLINE: u64 = 5;
+/// Error: The document's signing deadline has passed
+const E_DEADLINE_PASSED: u64 = 6;
+/// Error: Sequential signing requires an earlier signer to sign first
+const E_NOT_YOUR_TURN: u64 = 7;
+/// Error: The document is already fully signed
+const E_DOCUMENT_COMPLETED: u64 = 8;
 
 // ======== Structs ========
 
@@ -85,6 +96,20 @@ public struct SignerCap has key, store {
     document_id: ID,
 }
 
+/// Signing rules of a document, stored as a dynamic field on the `Document`
+///
+/// Kept outside the `Document` struct so the package stays upgrade
+/// compatible; documents without it sign in any order with no deadline.
+public struct Workflow has store {
+    /// When true, signers must sign in the order of `authorized_signers`
+    sequential: bool,
+    /// Signing is rejected after this timestamp (in milliseconds)
+    deadline_ms: Option<u64>,
+}
+
+/// Dynamic field key for a document's `Workflow`
+public struct WorkflowKey has copy, drop, store {}
+
 // ======== Events ========
 
 /// Event emitted when a new document is created
@@ -110,6 +135,24 @@ public struct DocumentSigned has copy, drop {
     signer: address,
     timestamp: u64,
     total_signatures: u64,
+}
+
+/// Event emitted when the creator switches between sequential and parallel signing
+public struct SigningOrderSet has copy, drop {
+    document_id: ID,
+    sequential: bool,
+}
+
+/// Event emitted when the creator sets, changes or clears the signing deadline
+public struct DeadlineSet has copy, drop {
+    document_id: ID,
+    deadline_ms: Option<u64>,
+}
+
+/// Event emitted when the last outstanding signature is collected
+public struct DocumentCompleted has copy, drop {
+    document_id: ID,
+    timestamp: u64,
 }
 
 // ======== Init Function ========
@@ -352,6 +395,10 @@ public fun sign_document(
     let signer = ctx.sender();
     // A revoked signer keeps their SignerCap object, so the list is the source of truth
     assert!(document.authorized_signers.contains(&signer), E_NOT_AUTHORIZED);
+    assert!(!is_past_deadline(document, clock), E_DEADLINE_PASSED);
+    if (is_sequential(document)) {
+        assert!(next_signer(document) == option::some(signer), E_NOT_YOUR_TURN);
+    };
 
     let already_signed = has_signed(document, signer);
     assert!(!already_signed, E_ALREADY_SIGNED);
@@ -374,6 +421,71 @@ public fun sign_document(
         timestamp: clock.timestamp_ms(),
         total_signatures: total_sigs,
     });
+
+    if (document.status == 2) {
+        event::emit(DocumentCompleted {
+            document_id: object::id(document),
+            timestamp: clock.timestamp_ms(),
+        });
+    };
+}
+
+/// Chooses between sequential and parallel signing
+///
+/// In sequential mode signers must sign in the order of the authorized
+/// signers list (signers added later sign last). Can only be changed
+/// before the first signature.
+///
+/// # Panics
+/// * If the sender is not the document creator
+/// * If someone has already signed
+///
+/// # Emits
+/// * `SigningOrderSet`
+public fun set_signing_order(document: &mut Document, sequential: bool, ctx: &TxContext) {
+    assert!(ctx.sender() == document.creator, E_NOT_AUTHORIZED);
+    assert!(document.signatures.is_empty(), E_SIGNING_STARTED);
+
+    workflow_mut(document).sequential = sequential;
+
+    event::emit(SigningOrderSet { document_id: object::id(document), sequential });
+}
+
+/// Sets or moves the signing deadline
+///
+/// Signatures submitted after the deadline are rejected. The creator can
+/// extend an expired deadline to reopen signing.
+///
+/// # Panics
+/// * If the sender is not the document creator
+/// * If the document is already fully signed
+/// * If the deadline is not in the future
+///
+/// # Emits
+/// * `DeadlineSet`
+public fun set_deadline(document: &mut Document, deadline_ms: u64, clock: &Clock, ctx: &TxContext) {
+    assert!(ctx.sender() == document.creator, E_NOT_AUTHORIZED);
+    assert!(document.status != 2, E_DOCUMENT_COMPLETED);
+    assert!(deadline_ms > clock.timestamp_ms(), E_INVALID_DEADLINE);
+
+    workflow_mut(document).deadline_ms = option::some(deadline_ms);
+
+    event::emit(DeadlineSet { document_id: object::id(document), deadline_ms: option::some(deadline_ms) });
+}
+
+/// Removes the signing deadline
+///
+/// # Panics
+/// * If the sender is not the document creator
+///
+/// # Emits
+/// * `DeadlineSet` with no deadline
+public fun clear_deadline(document: &mut Document, ctx: &TxContext) {
+    assert!(ctx.sender() == document.creator, E_NOT_AUTHORIZED);
+
+    workflow_mut(document).deadline_ms = option::none();
+
+    event::emit(DeadlineSet { document_id: object::id(document), deadline_ms: option::none() });
 }
 
 /// Seal approval function for document decryption
@@ -528,6 +640,41 @@ public fun is_participant(document: &Document, addr: address): bool {
     addr == document.creator || document.authorized_signers.contains(&addr)
 }
 
+/// Returns `true` if signers must sign in list order
+public fun is_sequential(document: &Document): bool {
+    df::exists_(&document.id, WorkflowKey {}) && workflow(document).sequential
+}
+
+/// Returns the signing deadline in milliseconds, if one is set
+public fun deadline(document: &Document): Option<u64> {
+    if (df::exists_(&document.id, WorkflowKey {})) {
+        workflow(document).deadline_ms
+    } else {
+        option::none()
+    }
+}
+
+/// Returns `true` if a deadline is set and has passed
+public fun is_past_deadline(document: &Document, clock: &Clock): bool {
+    let deadline = deadline(document);
+    deadline.is_some() && clock.timestamp_ms() > *deadline.borrow()
+}
+
+/// Returns the first authorized signer who has not signed yet
+///
+/// In sequential mode this is the only signer allowed to sign next.
+public fun next_signer(document: &Document): Option<address> {
+    let mut i = 0;
+    while (i < document.authorized_signers.length()) {
+        let signer = document.authorized_signers[i];
+        if (!has_signed(document, signer)) {
+            return option::some(signer)
+        };
+        i = i + 1;
+    };
+    option::none()
+}
+
 /// Returns the current status of a document
 ///
 /// # Parameters
@@ -606,6 +753,22 @@ public fun get_signatures(document: &Document): vector<Signature> {
 }
 
 // ======== Package Helpers ========
+
+fun workflow(document: &Document): &Workflow {
+    df::borrow(&document.id, WorkflowKey {})
+}
+
+/// Returns the document's workflow, creating the default one on first use
+fun workflow_mut(document: &mut Document): &mut Workflow {
+    if (!df::exists_(&document.id, WorkflowKey {})) {
+        df::add(
+            &mut document.id,
+            WorkflowKey {},
+            Workflow { sequential: false, deadline_ms: option::none() },
+        );
+    };
+    df::borrow_mut(&mut document.id, WorkflowKey {})
+}
 
 /// Recomputes `status` from the current signer list: complete once every
 /// authorized signer has signed, partial once anyone has signed
