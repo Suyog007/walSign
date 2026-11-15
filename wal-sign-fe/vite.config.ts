@@ -13,6 +13,7 @@ export default defineConfig({
 			VITE_REGISTRY_OBJECT_ID: '0xregistry',
 			VITE_WALRUS_AGGREGATOR_URL: 'https://aggregator.test',
 			VITE_WALRUS_PUBLISHER_URL: 'https://publisher.test',
+			VITE_SEAL_KEY_SERVERS: '0xks1,0xks2',
 		},
 	},
 	server: {

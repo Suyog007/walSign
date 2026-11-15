@@ -66,6 +66,12 @@ Individual signature records containing:
 - **Signer address**: Who signed the document
 - **Timestamp**: When the signature was recorded
 
+#### `discussion::Thread`
+A private discussion attached to a document (module `wal_sign::discussion`):
+- **One per document**: opened by any participant; its ID is stored on the document under a `ThreadKey` dynamic field
+- **Messages**: Seal ciphertext stored on chain in a table, with sender and timestamp (max 8 KiB per message)
+- **Access**: only the document's participants (creator + authorized signers) can post or obtain decryption keys
+
 ### Workflow
 
 1. **Document Creation**
@@ -226,7 +232,8 @@ let docs = get_assigned_documents(&registry, user_address);
 - `revoke_signer()` - Remove a signer's authorization
 
 ### Access Control
-- `seal_approve()` - Entry function for Seal encryption system
+- `seal_approve()` - Seal policy for document versions; key ids must start with the document ID
+- `is_participant()` - Check if an address is the creator or an authorized signer
 - `is_authorized()` - Check if an address is authorized
 - `has_signed()` - Check if a signer has already signed
 
@@ -239,6 +246,13 @@ let docs = get_assigned_documents(&registry, user_address);
 - `get_walrus_blob_id()` - Get document storage location
 - `get_authorized_signers()` - Get list of authorized signers
 - `get_signatures()` - Get all signatures
+
+### Discussion (`wal_sign::discussion`)
+- `create_thread()` - Open the document's discussion (participants only, once per document)
+- `post_message()` - Store an encrypted message (participants only)
+- `seal_approve_thread()` - Seal policy for messages; key ids must start with the thread ID
+- `has_thread()` / `thread_id()` - Find a document's thread
+- `message_count()` / `message()` - Read messages
 
 ## 📡 Events
 
@@ -267,6 +281,14 @@ Emitted when a document is signed:
 }
 ```
 
+### `discussion::ThreadCreated` / `discussion::MessagePosted`
+Emitted when a participant opens a document's discussion or posts to it.
+Message bodies are never included in events; they stay encrypted on the thread.
+```move
+{ thread_id: ID, document_id: ID, created_by: address, timestamp: u64 }
+{ thread_id: ID, document_id: ID, sender: address, index: u64, timestamp: u64 }
+```
+
 ## 🔒 Security Considerations
 
 ### Authorization Checks
@@ -277,6 +299,8 @@ Emitted when a document is signed:
 
 ### Access Control
 - Seal encryption integration ensures only authorized parties can decrypt
+- Seal key ids are namespaced: document keys under the document ID, discussion keys under the thread ID, so access to one object never unlocks another
+- Revoking a signer removes their access to the document and its discussion
 - Capability-based system prevents unauthorized access
 - Creator maintains ultimate control over document permissions
 
@@ -301,9 +325,11 @@ sui move test
 ```
 wal_sign/
 ├── sources/
-│   └── wal_sign.move          # Main contract code
+│   ├── wal_sign.move          # Documents, signing and the document Seal policy
+│   └── discussion.move        # Encrypted per-document discussion threads
 ├── tests/
-│   └── wal_sign_tests.move    # Test suite
+│   ├── wal_sign_tests.move    # Document and signing tests
+│   └── discussion_tests.move  # Discussion access-control tests
 ├── scripts/
 │   └── utils/
 │       ├── setup.ts           # Deployment script
@@ -317,6 +343,14 @@ wal_sign/
 
 - `E_NOT_AUTHORIZED (1)`: User is not authorized to perform the operation
 - `E_ALREADY_SIGNED (2)`: User has already signed this document
+- `E_INVALID_KEY_ID (3)`: Seal key id is not namespaced under the document
+
+`wal_sign::discussion`:
+- `E_NOT_PARTICIPANT (1)`: Sender is not the document's creator or an authorized signer
+- `E_WRONG_DOCUMENT (2)`: Thread does not belong to the given document
+- `E_THREAD_EXISTS (3)`: The document already has a thread
+- `E_EMPTY_MESSAGE (4)` / `E_MESSAGE_TOO_LARGE (5)`: Ciphertext is empty or over 8 KiB
+- `E_INVALID_KEY_ID (6)`: Seal key id is not namespaced under the thread
 
 
 **Built with ❤️ on Sui Blockchain**

@@ -12,6 +12,7 @@ import { uploadToWalrus } from '../services/walrusService';
 import { useDocumentDecryption } from '../hooks/useDocumentDecryption';
 import { encryptPDF } from '../services/documentService';
 import { PdfSignatureEditor } from '../components/PdfSignatureEditor';
+import { DocumentThreadPanel } from '../components/DocumentThreadPanel';
 import { Loader, CheckCircle, AlertCircle, FileText, Users, Calendar, Edit, Lock, Upload, Key, Shield } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -759,6 +760,8 @@ export function SignPage() {
           </CardBody>
         </Card>
       </div>
+
+      <DocumentThreadPanel document={document} />
 
       {/* Progress Modal - Centered on Screen */}
       {isProcessingSignature && signProgress.stage !== 'idle' && (

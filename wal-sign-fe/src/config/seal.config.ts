@@ -1,4 +1,5 @@
 import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
+import { SealClient } from "@mysten/seal";
 
 // Define KeyServer type locally since it's not exported from @mysten/seal index
 interface KeyServer {
@@ -42,6 +43,32 @@ export const WALRUS_CONFIG = {
     'VITE_WALRUS_PUBLISHER_URL',
   ),
 };
+
+// Seal key server object IDs (comma separated, from .env)
+export const SEAL_KEY_SERVERS = getEnvVar('VITE_SEAL_KEY_SERVERS')
+  .split(',')
+  .map((id) => id.trim())
+  .filter(Boolean);
+
+// Number of key servers that must agree before a key is released
+export const SEAL_THRESHOLD = Math.min(2, SEAL_KEY_SERVERS.length);
+
+let sealClient: SealClient | null = null;
+
+/**
+ * Shared Seal client used for document and discussion encryption.
+ * Created lazily so importing the config has no side effects.
+ */
+export function getSealClient(): SealClient {
+  if (!sealClient) {
+    sealClient = new SealClient({
+      suiClient: suiClient as any,
+      serverConfigs: SEAL_KEY_SERVERS.map((objectId) => ({ objectId, weight: 1 })),
+      verifyKeyServers: true,
+    });
+  }
+  return sealClient;
+}
 
 // Export KeyServer type for use in other modules
 export type { KeyServer };
