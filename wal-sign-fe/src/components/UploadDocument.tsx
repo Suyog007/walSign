@@ -10,6 +10,8 @@ import { useSuiWallet } from '../hooks/useSuiWallet';
 import { Modal } from './ui/Modal';
 import { DocumentViewer } from './DocumentViewer';
 import { useDocumentUpload } from '../hooks/useDocumentUpload';
+import { OrderedSignerList, SigningRulesFields } from './SigningRulesFields';
+import { parseDeadlineInput, WorkflowSettings } from '../services/workflowService';
 
 export function UploadDocument() {
   const { connected } = useSuiWallet();
@@ -18,6 +20,9 @@ export function UploadDocument() {
   const [description, setDescription] = useState('');
   const [recipient, setRecipient] = useState('');
   const [recipients, setRecipients] = useState<string[]>([]);
+  const [sequential, setSequential] = useState(false);
+  const [deadline, setDeadline] = useState('');
+  const [deadlineError, setDeadlineError] = useState<string | null>(null);
   const [openModal, setOpenModal] = useState(false);
   const [createdId, setCreatedId] = useState<string>('');
   const [walrusBlobId, setWalrusBlobId] = useState<string>('');
@@ -44,7 +49,6 @@ export function UploadDocument() {
     setRecipients((r) => [...r, recipient]);
     setRecipient('');
   };
-  const removeRecipient = (addr: string) => setRecipients((r) => r.filter((x) => x !== addr));
 
   const fileInfo = useMemo(() => {
     if (!file) return null;
@@ -54,10 +58,18 @@ export function UploadDocument() {
 
   const onCreate = async () => {
     if (!file) return;
+    const workflow: WorkflowSettings = {};
+    if (sequential) workflow.sequential = true;
+    if (deadline) {
+      const parsed = parseDeadlineInput(deadline, Date.now());
+      if ('error' in parsed) {
+        setDeadlineError(parsed.error);
+        return;
+      }
+      workflow.deadlineMs = parsed.deadlineMs;
+    }
     try {
-      console.log("tt");
-      const res = await uploadDocument(file, title, recipients);
-      console.log("hereeeeelklll");
+      const res = await uploadDocument(file, title, recipients, workflow);
       setCreatedId(res.documentId);
       setWalrusBlobId(res.walrusBlobId);
       setTxHash(res.txHash);
@@ -133,31 +145,20 @@ export function UploadDocument() {
                   <label className="block text-xs font-semibold text-gray-600 mb-2">
                     Recipients ({recipients.length})
                   </label>
-                  <div className="flex flex-wrap gap-2">
-                    {recipients.map((addr) => (
-                      <span 
-                        key={addr} 
-                        className="inline-flex items-center gap-2 rounded-lg bg-white border border-gray-300 px-3 py-1.5 text-xs font-mono shadow-sm"
-                        title={addr}
-                      >
-                        <span className="text-gray-700">
-                          {addr.slice(0, 6)}...{addr.slice(-4)}
-                        </span>
-                        <button 
-                          onClick={() => removeRecipient(addr)} 
-                          className="text-red-500 hover:text-red-700 hover:bg-red-50 rounded p-0.5 transition-colors"
-                          title="Remove recipient"
-                        >
-                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </span>
-                    ))}
-                  </div>
+                  <OrderedSignerList signers={recipients} onChange={setRecipients} showOrder={sequential} />
                 </div>
               )}
             </div>
+            <SigningRulesFields
+              sequential={sequential}
+              onSequentialChange={setSequential}
+              deadline={deadline}
+              onDeadlineChange={(value) => {
+                setDeadline(value);
+                setDeadlineError(null);
+              }}
+              deadlineError={deadlineError}
+            />
             <Button 
               onClick={onCreate} 
               disabled={!canCreate || isUploading}
