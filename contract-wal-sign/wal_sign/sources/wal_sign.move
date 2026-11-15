@@ -12,6 +12,8 @@ use sui::table::{Self, Table};
 const E_NOT_AUTHORIZED: u64 = 1;
 /// Error: User has already signed this document
 const E_ALREADY_SIGNED: u64 = 2;
+/// Error: Seal key id does not belong to this document
+const E_INVALID_KEY_ID: u64 = 3;
 
 // ======== Structs ========
 
@@ -383,21 +385,20 @@ public fun sign_document(
 ///
 /// This entry function is called by the Seal encryption system to verify
 /// that a user has permission to decrypt a document. Only the document
-/// creator or authorized signers can decrypt.
+/// creator or authorized signers can decrypt, and only keys whose id is
+/// namespaced under this document's object ID are released.
 ///
 /// # Parameters
-/// * `_` - Encrypted object ID (unused, required by Seal API)
+/// * `id` - Seal key id being requested (must start with the document ID bytes)
 /// * `document` - Reference to the document
 /// * `ctx` - Transaction context for sender identification
 ///
 /// # Panics
+/// * If the key id is not namespaced under this document
 /// * If the sender is not the creator or an authorized signer
-entry fun seal_approve(_: vector<u8>, document: &Document, ctx: &TxContext) {
-    assert!(
-        vector::contains(&document.authorized_signers, &ctx.sender()) || 
-        ctx.sender() == document.creator, 
-        E_NOT_AUTHORIZED
-    );
+entry fun seal_approve(id: vector<u8>, document: &Document, ctx: &TxContext) {
+    assert!(is_prefix(object::id(document).to_bytes(), &id), E_INVALID_KEY_ID);
+    assert!(is_participant(document, ctx.sender()), E_NOT_AUTHORIZED);
 }
 
 /// Revokes a signer's authorization from a document
@@ -519,6 +520,18 @@ public fun is_authorized(document: &Document, addr: address): bool {
     vector::contains(&document.authorized_signers, &addr)
 }
 
+/// Checks if an address may read the document and take part in its discussion
+///
+/// # Parameters
+/// * `document` - Reference to the document
+/// * `addr` - Address to check
+///
+/// # Returns
+/// * `true` if the address is the creator or an authorized signer
+public fun is_participant(document: &Document, addr: address): bool {
+    addr == document.creator || document.authorized_signers.contains(&addr)
+}
+
 /// Returns the current status of a document
 ///
 /// # Parameters
@@ -594,6 +607,24 @@ public fun get_authorized_signers(document: &Document): vector<address> {
 /// * Vector of Signature structs
 public fun get_signatures(document: &Document): vector<Signature> {
     document.signatures
+}
+
+// ======== Package Helpers ========
+
+/// Returns `true` if `data` starts with `prefix`
+public(package) fun is_prefix(prefix: vector<u8>, data: &vector<u8>): bool {
+    let len = prefix.length();
+    if (len > data.length()) {
+        return false
+    };
+    let mut i = 0;
+    while (i < len) {
+        if (prefix[i] != data[i]) {
+            return false
+        };
+        i = i + 1;
+    };
+    true
 }
 
 // ======== Testing ========

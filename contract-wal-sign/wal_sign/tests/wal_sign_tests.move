@@ -5,7 +5,7 @@ module wal_sign::wal_sign_tests;
 use std::string;
 use std::unit_test::assert_eq;
 use sui::{
-    test_scenario::{Self},
+    test_scenario::{Self, Scenario},
     clock::{Self, Clock},
 };
 
@@ -41,6 +41,31 @@ fun create_test_clock(ctx: &mut TxContext): Clock {
 /// Helper function to set clock time
 fun set_clock_time(clock: &mut Clock, time: u64) {
     clock.set_for_testing(time);
+}
+
+/// Helper that initialises the registry and creates one document as CREATOR
+fun create_test_document(scenario: &mut Scenario, signers: vector<address>) {
+    wal_sign::init_for_testing(scenario.ctx());
+
+    scenario.next_tx(CREATOR);
+    {
+        let mut registry = scenario.take_shared<DocumentRegistry>();
+        let mut clock = create_test_clock(scenario.ctx());
+        set_clock_time(&mut clock, 1000);
+
+        wal_sign::create_document(
+            &mut registry,
+            string::utf8(WALRUS_BLOB_ID),
+            string::utf8(DOCUMENT_TITLE),
+            string::utf8(DOCUMENT_DESCRIPTION),
+            signers,
+            &clock,
+            scenario.ctx(),
+        );
+
+        clock.destroy_for_testing();
+        test_scenario::return_shared(registry);
+    };
 }
 
 // ======== Init Function Tests ========
@@ -835,7 +860,7 @@ fun test_seal_approve_creator() {
     scenario.next_tx(CREATOR);
     {
         let document = scenario.take_shared<Document>();
-        let encrypted_id = vector::empty<u8>();
+        let encrypted_id = object::id(&document).to_bytes();
         
         // Creator should be able to approve
         wal_sign::seal_approve(encrypted_id, &document, scenario.ctx());
@@ -876,7 +901,7 @@ fun test_seal_approve_authorized_signer() {
     scenario.next_tx(SIGNER1);
     {
         let document = scenario.take_shared<Document>();
-        let encrypted_id = vector::empty<u8>();
+        let encrypted_id = object::id(&document).to_bytes();
         
         // Authorized signer should be able to approve
         wal_sign::seal_approve(encrypted_id, &document, scenario.ctx());
@@ -918,7 +943,7 @@ fun test_seal_approve_unauthorized() {
     scenario.next_tx(UNAUTHORIZED);
     {
         let document = scenario.take_shared<Document>();
-        let encrypted_id = vector::empty<u8>();
+        let encrypted_id = object::id(&document).to_bytes();
         
         // Unauthorized user tries to approve - should fail
         wal_sign::seal_approve(encrypted_id, &document, scenario.ctx());
@@ -926,6 +951,83 @@ fun test_seal_approve_unauthorized() {
         test_scenario::return_shared(document);
     };
     
+    scenario.end();
+}
+
+#[test]
+fun test_seal_approve_accepts_namespaced_key_id() {
+    let mut scenario = test_scenario::begin(CREATOR);
+    create_test_document(&mut scenario, vector[SIGNER1]);
+
+    scenario.next_tx(SIGNER1);
+    {
+        let document = scenario.take_shared<Document>();
+        // Document id followed by a nonce, as used for per-version encryption
+        let mut key_id = object::id(&document).to_bytes();
+        key_id.append(b"nonce");
+
+        wal_sign::seal_approve(key_id, &document, scenario.ctx());
+
+        test_scenario::return_shared(document);
+    };
+
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_INVALID_KEY_ID)]
+fun test_seal_approve_rejects_foreign_key_id() {
+    let mut scenario = test_scenario::begin(CREATOR);
+    create_test_document(&mut scenario, vector[SIGNER1]);
+
+    scenario.next_tx(SIGNER1);
+    {
+        let document = scenario.take_shared<Document>();
+        // A participant of this document must not unlock keys of other objects
+        let foreign_key_id = object::id_from_address(@0x1234).to_bytes();
+
+        wal_sign::seal_approve(foreign_key_id, &document, scenario.ctx());
+
+        test_scenario::return_shared(document);
+    };
+
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = wal_sign::E_INVALID_KEY_ID)]
+fun test_seal_approve_rejects_empty_key_id() {
+    let mut scenario = test_scenario::begin(CREATOR);
+    create_test_document(&mut scenario, vector[SIGNER1]);
+
+    scenario.next_tx(CREATOR);
+    {
+        let document = scenario.take_shared<Document>();
+
+        wal_sign::seal_approve(vector[], &document, scenario.ctx());
+
+        test_scenario::return_shared(document);
+    };
+
+    scenario.end();
+}
+
+#[test]
+fun test_is_participant() {
+    let mut scenario = test_scenario::begin(CREATOR);
+    create_test_document(&mut scenario, vector[SIGNER1]);
+
+    scenario.next_tx(CREATOR);
+    {
+        let document = scenario.take_shared<Document>();
+
+        assert!(wal_sign::is_participant(&document, CREATOR));
+        assert!(wal_sign::is_participant(&document, SIGNER1));
+        assert!(!wal_sign::is_participant(&document, UNAUTHORIZED));
+
+        test_scenario::return_shared(document);
+    };
+
     scenario.end();
 }
 
